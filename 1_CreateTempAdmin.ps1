@@ -3,7 +3,7 @@ param(
 )
 
 # 1_CreateTempAdmin.ps1 - ConnectWise Automate compatible
-# Outputs: Username|Password
+# Outputs: Step|Username|Password|Result
 
 if (-not (Get-Module -ListAvailable Microsoft.PowerShell.LocalAccounts)) {
     Write-Error "Microsoft.PowerShell.LocalAccounts module required."
@@ -49,8 +49,8 @@ try {
     $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
     New-LocalUser -Name $Username -Password $SecurePassword -Description "Temporary Automation Admin" -FullName "Temp Automate Admin" | Out-Null
     
-    # Final Output for Automate variable
-    Write-Output "${Username}|${Password}"
+    # Final Output: Step|Username|Password|Result
+    Write-Output "1|${Username}|${Password}|UserCreated"
 }
 catch {
     Write-Error "Failed to create user: $($_.Exception.Message)"

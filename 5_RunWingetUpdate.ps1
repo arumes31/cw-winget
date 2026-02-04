@@ -4,16 +4,15 @@ param(
 )
 
 # 5_RunWingetUpdate.ps1 - ConnectWise Automate compatible
-# Input: Username|Password
-# Output: Username|Password
+# Input/Output: Step|Username|Password|Result
 
 $Parts = $State.Split('|')
-if ($Parts.Count -lt 2) {
-    Write-Error "Invalid state string: ${State}. Expected Username|Password"
+if ($Parts.Count -lt 3) {
+    Write-Error "Invalid state string: ${State}. Expected Step|Username|Password|Result"
     exit 1
 }
-$Username = $Parts[0].Trim()
-$Password = $Parts[1].Trim()
+$Username = $Parts[1].Trim()
+$Password = $Parts[2].Trim()
 
 # Check if running as Administrator for script setup
 if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
@@ -82,7 +81,7 @@ try {
     }
     
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-    Write-Output $State
+    Write-Output "5|${Username}|${Password}|WingetUpdated"
 }
 catch {
     Write-Error "Failed to run Winget update: $($_.Exception.Message)"

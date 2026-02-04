@@ -4,19 +4,19 @@ param(
 )
 
 # 6_RemoveTempAdmin.ps1 - ConnectWise Automate compatible
-# Input: Username|Password
-# Output: Done
+# Input/Output: Step|Username|Password|Result
 
 $Parts = $State.Split('|')
-if ($Parts.Count -lt 1) {
-    Write-Error "Invalid state string: ${State}"
+if ($Parts.Count -lt 3) {
+    Write-Error "Invalid state string: ${State}. Expected Step|Username|Password|Result"
     exit 1
 }
-$Username = $Parts[0].Trim()
+$Username = $Parts[1].Trim()
+$Password = $Parts[2].Trim()
 
 try {
     Remove-LocalUser -Name $Username -ErrorAction Stop
-    Write-Output "Done"
+    Write-Output "6|${Username}|${Password}|UserRemoved"
 }
 catch {
     Write-Error "Failed to remove user ${Username}: $($_.Exception.Message)"

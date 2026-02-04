@@ -4,20 +4,20 @@ param(
 )
 
 # 2_AddLocalAdmin.ps1 - ConnectWise Automate compatible
-# Input: Username|Password
-# Output: Username|Password
+# Input/Output: Step|Username|Password|Result
 
 $Parts = $State.Split('|')
-if ($Parts.Count -lt 1) {
-    Write-Error "Invalid state string: ${State}"
+if ($Parts.Count -lt 3) {
+    Write-Error "Invalid state string: ${State}. Expected Step|Username|Password|Result"
     exit 1
 }
-$Username = $Parts[0].Trim()
+$Username = $Parts[1].Trim()
+$Password = $Parts[2].Trim()
 
 try {
     Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
-    # Return the state for the next step
-    Write-Output $State
+    # Return updated state: Step|Username|Password|Result
+    Write-Output "2|${Username}|${Password}|AddedToAdmin"
 }
 catch {
     Write-Error "Failed to add ${Username} to Administrators: $($_.Exception.Message)"
