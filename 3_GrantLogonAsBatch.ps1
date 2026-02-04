@@ -1,14 +1,18 @@
 param(
     [Parameter(Mandatory = $true)]
-    [hashtable]$State
+    [string]$State
 )
 
-$Username = $State.Username
+# 3_GrantLogonAsBatch.ps1 - ConnectWise Automate compatible
+# Input: Username|Password
+# Output: Username|Password
 
-if (-not (Get-Module -ListAvailable Microsoft.PowerShell.LocalAccounts)) {
-    $State.Error = "Microsoft.PowerShell.LocalAccounts module required."
-    return $State
+$Parts = $State.Split('|')
+if ($Parts.Count -lt 1) {
+    Write-Error "Invalid state string: $State"
+    exit 1
 }
+$Username = $Parts[0].Trim()
 
 $TmpFile = Join-Path $env:TEMP "secedit_export.inf"
 $CfgFile = Join-Path $env:TEMP "secedit_import.inf"
@@ -24,7 +28,8 @@ try {
             $Content = $Content -replace [regex]::Escape($BatchLogonLine), $NewBatchLogonLine
         }
         else {
-            return $State
+            Write-Output $State
+            return
         }
     }
     else {
@@ -41,13 +46,14 @@ try {
     $Content | Set-Content $CfgFile -Encoding Unicode
     secedit /configure /db $env:windir\security\local.sdb /cfg $CfgFile /areas USER_RIGHTS | Out-Null
     gpupdate /force | Out-Null
+    
+    Write-Output $State
 }
 catch {
-    $State.Error = "Failed to grant SeBatchLogonRight: $($_.Exception.Message)"
+    Write-Error "Failed to grant SeBatchLogonRight: $($_.Exception.Message)"
+    exit 1
 }
 finally {
     if (Test-Path $TmpFile) { Remove-Item $TmpFile }
     if (Test-Path $CfgFile) { Remove-Item $CfgFile }
 }
-
-return $State

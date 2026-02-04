@@ -1,31 +1,36 @@
 param(
     [Parameter(Mandatory = $true)]
-    [hashtable]$State
+    [string]$State
 )
 
-$Username = $State.Username
-$Password = $State.Password
+# 5_RunWingetUpdate.ps1 - ConnectWise Automate compatible
+# Input: Username|Password
+# Output: Username|Password
+
+$Parts = $State.Split('|')
+if ($Parts.Count -lt 2) {
+    Write-Error "Invalid state string: $State. Expected Username|Password"
+    exit 1
+}
+$Username = $Parts[0].Trim()
+$Password = $Parts[1].Trim()
 
 # Check if running as Administrator for script setup
 if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    $State.Error = "Script 5 must be run as Administrator (triggered by Master script)."
-    return $State
+    Write-Error "Script 5 must be run as Administrator."
+    exit 1
 }
 
-$TargetUser = $Username.Trim() -replace '\s+', ''
-$TargetPass = $Password.Trim() -replace '\s+', ''
+$TargetUser = $Username -replace '\s+', ''
+$TargetPass = $Password -replace '\s+', ''
 
 $TaskName = "TempWingetTask_$(Get-Random)"
-
-# Define temp script path
 $WorkDir = "C:\eworx"
 if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
 $TempScriptPath = Join-Path -Path $WorkDir -ChildPath "TempWingetUpdate_$(Get-Random).ps1"
 
-# Update script content
 $UpdateScriptContent = @"
 Start-Transcript -Path '$WorkDir\winget-log.txt' -Append
-`$ignoreArray = @('OpenJS.NodeJS.LTS', 'Ultimaker.Cura', 'app123')
 function Test-IsAdmin {
     `$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
     `$principal = New-Object Security.Principal.WindowsPrincipal(`$currentUser)
@@ -71,15 +76,17 @@ try {
     } while ($true)
 
     if (-not $taskInfo -or $taskInfo.LastTaskResult -ne 0) {
-        $State.Error = "Winget update task failed or timed out. Result: " + ($taskInfo.LastTaskResult ?? "Unknown")
+        Write-Error "Winget update task failed or timed out. Result: " + ($taskInfo.LastTaskResult ?? "Unknown")
+        exit 1
     }
+    
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    Write-Output $State
 }
 catch {
-    $State.Error = "Failed to run Winget update: $($_.Exception.Message)"
+    Write-Error "Failed to run Winget update: $($_.Exception.Message)"
+    exit 1
 }
 finally {
     Remove-Item -Path $TempScriptPath -Force -ErrorAction SilentlyContinue
 }
-
-return $State

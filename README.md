@@ -1,27 +1,27 @@
-# Winget Automated Update Utility
+# Winget Automated Update Utility (ConnectWise Automate)
 
-This utility allows running `winget` updates from a non-interactive context (like the SYSTEM account) by creating a temporary local administrator.
+This utility is designed to run in a ConnectWise Automate workflow. It uses a single variable to pass state (credentials) between script steps.
+
+## ConnectWise Automate Integration
+
+1.  **Step 1**: Run `1_CreateTempAdmin.ps1`. Store 'PowerShell Script Result' in a variable like `%WingetCreds%`.
+2.  **Step 2**: Run `2_AddLocalAdmin.ps1 -State "%WingetCreds%"`. Update `%WingetCreds%` with the result.
+3.  **Step 3**: Run `3_GrantLogonAsBatch.ps1 -State "%WingetCreds%"`. Update `%WingetCreds%` with the result.
+4.  **Step 4**: Run `4_EnableAccount.ps1 -State "%WingetCreds%"`. Update `%WingetCreds%` with the result.
+5.  **Step 5**: Run `5_RunWingetUpdate.ps1 -State "%WingetCreds%"`. Update `%WingetCreds%` with the result. (Ensure this step runs as Admin).
+6.  **Step 6**: Run `6_RemoveTempAdmin.ps1 -State "%WingetCreds%"`.
 
 ## Scripts
 
-1.  **[1_CreateTempAdmin.ps1](file:///c:/DR/Nextcloud/BUILD/cw-winget/1_CreateTempAdmin.ps1)**: Creates a temporary user with a random password and outputs `username|password`.
-2.  **[2_AddLocalAdmin.ps1](file:///c:/DR/Nextcloud/BUILD/cw-winget/2_AddLocalAdmin.ps1)**: Adds the user to the local Administrators group.
-3.  **[3_GrantLogonAsBatch.ps1](file:///c:/DR/Nextcloud/BUILD/cw-winget/3_GrantLogonAsBatch.ps1)**: Grants "Logon as batch job" permission using `secedit`.
-4.  **[4_EnableAccount.ps1](file:///c:/DR/Nextcloud/BUILD/cw-winget/4_EnableAccount.ps1)**: Ensures the account is enabled.
-5.  **[5_RunWingetUpdate.ps1](file:///c:/DR/Nextcloud/BUILD/cw-winget/5_RunWingetUpdate.ps1)**: Runs `winget upgrade --all` via a temporary scheduled task.
-6.  **[6_RemoveTempAdmin.ps1](file:///c:/DR/Nextcloud/BUILD/cw-winget/6_RemoveTempAdmin.ps1)**: Cleanup the temporary user.
+- **1_CreateTempAdmin.ps1**: Creates user, outputs `Username|Password`.
+- **2_AddLocalAdmin.ps1**: Adds user to local admins.
+- **3_GrantLogonAsBatch.ps1**: Grants 'Logon as batch job'.
+- **4_EnableAccount.ps1**: Enables the account.
+- **5_RunWingetUpdate.ps1**: Runs winget upgrades via a temporary Scheduled Task.
+- **6_RemoveTempAdmin.ps1**: Deletes the temporary user.
 
-## Master Script
+## PowerShell Compatibility
 
-**[Run-WingetAutomated.ps1](file:///c:/DR/Nextcloud/BUILD/cw-winget/Run-WingetAutomated.ps1)**
-
-This script orchestrates the entire process. It captures the credentials from step 1 and passes them through steps 2-5, finally cleaning up in step 6.
-
-### Usage
-
-Run from an elevated PowerShell prompt:
-```powershell
-.\Run-WingetAutomated.ps1
-```
-
-Or run via Task Scheduler as SYSTEM.
+- Fully supports **PowerShell 5.1**.
+- Handles UTF-16 encoding quirks of `secedit`.
+- Robust winget bootstrap (Repair-WinGetPackageManager).

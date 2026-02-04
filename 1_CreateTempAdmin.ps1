@@ -1,18 +1,20 @@
 param(
-    [Parameter(Mandatory = $true)]
-    [hashtable]$State
+    [string]$State = ""
 )
 
+# 1_CreateTempAdmin.ps1 - ConnectWise Automate compatible
+# Outputs: Username|Password
+
 if (-not (Get-Module -ListAvailable Microsoft.PowerShell.LocalAccounts)) {
-    $State.Error = "Microsoft.PowerShell.LocalAccounts module required."
-    return $State
+    Write-Error "Microsoft.PowerShell.LocalAccounts module required."
+    exit 1
 }
 
-$Username = $State.Username
+$Username = "TempAutomateAdmin"
 $ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
 if ($ExistingUser) {
-    $State.Error = "User $Username already exists."
-    return $State
+    Write-Error "User $Username already exists."
+    exit 1
 }
 
 $PasswordLength = 16
@@ -47,10 +49,10 @@ try {
     $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
     New-LocalUser -Name $Username -Password $SecurePassword -Description "Temporary Automation Admin" -FullName "Temp Automate Admin" | Out-Null
     
-    $State.Password = $Password
+    # Final Output for Automate variable
+    Write-Output "$Username|$Password"
 }
 catch {
-    $State.Error = "Failed to create user: $($_.Exception.Message)"
+    Write-Error "Failed to create user: $($_.Exception.Message)"
+    exit 1
 }
-
-return $State
