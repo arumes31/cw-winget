@@ -54,25 +54,32 @@ $UpdateScriptContent | Out-File -FilePath $TempScriptPath -Encoding UTF8
 try {
     $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$TempScriptPath`""
     $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
-    # Removing manual ExecutionTimeLimit to avoid XML serialization bug in some PS 5.1 environments
+    
+    # We omit ExecutionTimeLimit entirely to avoid serialization bugs in PS 5.1
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    
     Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -User $TargetUser -Password $TargetPass -RunLevel Highest -Force | Out-Null
     
     Start-ScheduledTask -TaskName $TaskName
+    
+    # Wait for task completion (maximum 2 hours)
     $timeout = 7200 
     $startTime = Get-Date
+    $taskFinished = $false
+    
     do {
-        Start-Sleep -Seconds 10
+        Start-Sleep -Seconds 15
         $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
         if ($task -and $task.State -ne "Running") {
             $taskInfo = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
+            $taskFinished = $true
             break
         }
         if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) { break }
     } while ($true)
 
-    if (-not $taskInfo -or $taskInfo.LastTaskResult -ne 0) {
-        $lastResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { "Unknown" }
+    if (-not $taskFinished -or -not $taskInfo -or $taskInfo.LastTaskResult -ne 0) {
+        $lastResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { "Timeout or No Info" }
         Write-Error "Winget update task failed or timed out. Result: $lastResult"
         exit 1
     }
@@ -85,5 +92,5 @@ catch {
     exit 1
 }
 finally {
-    Remove-Item -Path $TempScriptPath -Force -ErrorAction SilentlyContinue
+    if (Test-Path $TempScriptPath) { Remove-Item -Path $TempScriptPath -Force -ErrorAction SilentlyContinue }
 }
