@@ -56,11 +56,25 @@ try {
 
 # Aggressive fix for error 0x8a15000f (Source data missing)
 `$WingetAppData = Join-Path `$env:LOCALAPPDATA "Microsoft\WinGet"
-if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -Force -ErrorAction SilentlyContinue }
+`$WingetLocalState = Join-Path `$env:LOCALAPPDATA "Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState"
 
-# Reset and Update with explicit agreement acceptance where supported
+if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -Force -ErrorAction SilentlyContinue }
+if (Test-Path `$WingetLocalState) { Remove-Item -Path `$WingetLocalState -Recurse -Force -ErrorAction SilentlyContinue }
+
+# Nuclear option: Remove sources first to ensure clean slate
+& winget source remove --name winget 2>&1 | Out-Null
+& winget source remove --name msstore 2>&1 | Out-Null
+
+# Reset and Update
 & winget source reset --force
 & winget source update
+
+# Stabilization delay to ensure source index is flushed to disk
+Start-Sleep -Seconds 10
+
+# Debug: List sources to log
+& winget source list
+
 # Trigger index creation
 & winget search "NuGet" --accept-source-agreements | Out-Null
 
