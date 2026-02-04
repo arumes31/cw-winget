@@ -54,8 +54,8 @@ $UpdateScriptContent | Out-File -FilePath $TempScriptPath -Encoding UTF8
 try {
     $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$TempScriptPath`""
     $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
-    # Use PT1H (ISO 8601) format directly for PS 5.1 XML compatibility
-    $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit "PT1H"
+    # Removing manual ExecutionTimeLimit to avoid XML serialization bug in some PS 5.1 environments
+    $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
     Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -User $TargetUser -Password $TargetPass -RunLevel Highest -Force | Out-Null
     
     Start-ScheduledTask -TaskName $TaskName
