@@ -46,7 +46,7 @@ if (Test-IsAdmin) {
     Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
 }
 # Aggressive fix for error 0x8a15000f (Source data missing)
-$WingetAppData = Join-Path `$env:LOCALAPPDATA "Microsoft\WinGet"
+`$WingetAppData = Join-Path `$env:LOCALAPPDATA "Microsoft\WinGet"
 if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -Force -ErrorAction SilentlyContinue }
 
 & winget source reset --force ; & winget source update
