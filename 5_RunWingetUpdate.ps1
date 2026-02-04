@@ -83,8 +83,31 @@ try {
 
     $WingetLog = "No log found"
     if (Test-Path $LogPath) {
-        $WingetLog = Get-Content $LogPath | Out-String
-        $WingetLog = $WingetLog -replace "[\r\n]+", " ; " -replace "\|", "/" # Clean for state string
+        $RawLog = Get-Content $LogPath
+        # Filter out transcript headers/footers and noise
+        $CleanLog = $RawLog | Where-Object { 
+            $_ -notmatch "^\*\*\*\*" -and 
+            $_ -notmatch "^Windows PowerShell transcript" -and
+            $_ -notmatch "^Start time:" -and
+            $_ -notmatch "^Username:" -and
+            $_ -notmatch "^RunAs User:" -and
+            $_ -notmatch "^Configuration Name:" -and
+            $_ -notmatch "^Machine:" -and
+            $_ -notmatch "^Host Application:" -and
+            $_ -notmatch "^Process ID:" -and
+            $_ -notmatch "^PSVersion:" -and
+            $_ -notmatch "^PSEdition:" -and
+            $_ -notmatch "^PSCompatibleVersions:" -and
+            $_ -notmatch "^BuildVersion:" -and
+            $_ -notmatch "^CLRVersion:" -and
+            $_ -notmatch "^WSManStackVersion:" -and
+            $_ -notmatch "^PSRemotingProtocolVersion:" -and
+            $_ -notmatch "^SerializationVersion:" -and
+            $_ -notmatch "^Transcript started" -and
+            $_.Trim() -ne ""
+        }
+        $WingetLog = $CleanLog -join " ; "
+        $WingetLog = $WingetLog -replace "\|", "/" # Clean for state string
         if ($WingetLog.Length -gt 1000) { $WingetLog = $WingetLog.Substring(0, 1000) + "..." }
     }
 
