@@ -9,7 +9,7 @@ param(
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 1) {
-    Write-Error "Invalid state string: $State"
+    Write-Error "Invalid state string: ${State}"
     exit 1
 }
 $Username = $Parts[0].Trim()
@@ -20,6 +20,6 @@ try {
     Write-Output $State
 }
 catch {
-    Write-Error "Failed to add $Username to Administrators: $($_.Exception.Message)"
+    Write-Error "Failed to add ${Username} to Administrators: $($_.Exception.Message)"
     exit 1
 }

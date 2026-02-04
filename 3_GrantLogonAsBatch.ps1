@@ -9,7 +9,7 @@ param(
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 1) {
-    Write-Error "Invalid state string: $State"
+    Write-Error "Invalid state string: ${State}"
     exit 1
 }
 $Username = $Parts[0].Trim()
@@ -35,11 +35,11 @@ try {
     else {
         $PrivIndex = $Content.IndexOf("[Privilege Rights]")
         if ($PrivIndex -ge 0) {
-            $Content = $Content[0..$PrivIndex] + "SeBatchLogonRight = $Username" + $Content[($PrivIndex + 1)..$Content.Length]
+            $Content = $Content[0..$PrivIndex] + "SeBatchLogonRight = ${Username}" + $Content[($PrivIndex + 1)..$Content.Length]
         }
         else {
             $Content += "[Privilege Rights]"
-            $Content += "SeBatchLogonRight = $Username"
+            $Content += "SeBatchLogonRight = ${Username}"
         }
     }
 

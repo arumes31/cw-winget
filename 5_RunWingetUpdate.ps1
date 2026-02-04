@@ -9,7 +9,7 @@ param(
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 2) {
-    Write-Error "Invalid state string: $State. Expected Username|Password"
+    Write-Error "Invalid state string: ${State}. Expected Username|Password"
     exit 1
 }
 $Username = $Parts[0].Trim()
@@ -76,7 +76,8 @@ try {
     } while ($true)
 
     if (-not $taskInfo -or $taskInfo.LastTaskResult -ne 0) {
-        Write-Error "Winget update task failed or timed out. Result: " + ($taskInfo.LastTaskResult ?? "Unknown")
+        $lastResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { "Unknown" }
+        Write-Error "Winget update task failed or timed out. Result: $lastResult"
         exit 1
     }
     

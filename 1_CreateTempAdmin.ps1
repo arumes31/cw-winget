@@ -13,7 +13,7 @@ if (-not (Get-Module -ListAvailable Microsoft.PowerShell.LocalAccounts)) {
 $Username = "TempAutomateAdmin"
 $ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
 if ($ExistingUser) {
-    Write-Error "User $Username already exists."
+    Write-Error "User ${Username} already exists."
     exit 1
 }
 
@@ -50,7 +50,7 @@ try {
     New-LocalUser -Name $Username -Password $SecurePassword -Description "Temporary Automation Admin" -FullName "Temp Automate Admin" | Out-Null
     
     # Final Output for Automate variable
-    Write-Output "$Username|$Password"
+    Write-Output "${Username}|${Password}"
 }
 catch {
     Write-Error "Failed to create user: $($_.Exception.Message)"
