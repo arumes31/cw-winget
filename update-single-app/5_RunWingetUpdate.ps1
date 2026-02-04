@@ -84,8 +84,15 @@ Start-Sleep -Seconds 10
 `$installapp = '$installapp'
 Write-Output "DEBUG: Inner installapp value: '`$installapp'"
 
+# Sanitize
+if (`$installapp) { `$installapp = `$installapp.Trim() }
+
+`$checkNull = [string]::IsNullOrWhiteSpace(`$installapp)
+`$checkPlaceholder = (`$installapp -eq '@installapp@')
+Write-Output "DEBUG: CheckNull=`$checkNull, CheckPlaceholder=`$checkPlaceholder"
+
 # Check and Install/Update Specific App
-if (-not [string]::IsNullOrWhiteSpace(`$installapp) -and `$installapp -ne '@installapp@') {
+if (-not `$checkNull -and -not `$checkPlaceholder) {
     Write-Output "Checking for application: `$installapp"
     # Try to find the package first
     `$searchResult = & winget search --id `$installapp --accept-source-agreements
