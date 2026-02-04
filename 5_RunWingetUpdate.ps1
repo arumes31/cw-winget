@@ -58,8 +58,8 @@ try {
 `$WingetAppData = Join-Path `$env:LOCALAPPDATA "Microsoft\WinGet"
 if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -Force -ErrorAction SilentlyContinue }
 
-# Reset and Update with explicit agreement acceptance
-& winget source reset --force --accept-source-agreements
+# Reset and Update with explicit agreement acceptance where supported
+& winget source reset --force
 & winget source update --accept-source-agreements
 # Trigger index creation
 & winget search "NuGet" --accept-source-agreements | Out-Null
@@ -119,12 +119,16 @@ try {
             $_ -notmatch "^SerializationVersion:" -and
             $_ -notmatch "^Transcript started" -and
             $_ -notmatch "^End time:" -and
-            $_ -notmatch "Doneo+" -and 
+            $_ -notmatch "o{10,}" -and # Match long progress bars (10+ o's)
+            $_ -notmatch "^Deployment operation progress" -and
             $_ -notmatch "^Updating source:" -and
             $_ -notmatch "^Resetting all sources" -and
             $_ -notmatch "^The 'msstore' source requires" -and
             $_ -notmatch "^Terms of Transaction" -and
             $_ -notmatch "^The source requires the current machine" -and
+            $_ -notmatch "^usage: winget source reset" -and
+            $_ -notmatch "^The following arguments are available:" -and
+            $_ -notmatch "^The following options are available:" -and
             $_.Trim() -ne ""
         }
         $WingetLog = $CleanLog -join " ; "
