@@ -1,4 +1,4 @@
-# Winget Automated Update Utility (ConnectWise Automate)
+# Winget Automated Update Utility - Update All (ConnectWise Automate)
 
 This utility is designed for ConnectWise Automate workflows. It uses a single variable to pass state between steps via `@state@` placeholder injection.
 

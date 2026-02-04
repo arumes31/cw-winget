@@ -65,6 +65,10 @@ if (Test-Path `$WingetLocalState) { Remove-Item -Path `$WingetLocalState -Recurs
 & winget source remove --name winget 2>&1 | Out-Null
 & winget source remove --name msstore 2>&1 | Out-Null
 
+# Direct Source Injection (User Suggestion)
+# This bypasses potential download/caching issues by installing the source package directly
+Add-AppxPackage -Path "https://cdn.winget.microsoft.com/cache/source.msix" -ErrorAction SilentlyContinue
+
 # Reset and Update
 & winget source reset --force
 & winget source update
