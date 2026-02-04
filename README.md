@@ -1,4 +1,4 @@
-# ![CW Winget Logo](project_logo_transparent.png) ConnectWise Automate Winget Wrapper
+# ![CW Winget Logo](project_logo.png) ConnectWise Automate Winget Wrapper
 
 This project provides PowerShell scripts to integrate `winget` (Windows Package Manager) with ConnectWise Automate (CWA). It allows for automated application updates and installations running as a temporary administrative user, bypassing system context limitations.
 
