@@ -44,13 +44,14 @@ try {
     # Repair/Register WinGet for the current user session
     Import-Module Microsoft.WinGet.Client -ErrorAction SilentlyContinue
     if (Get-Command Repair-WinGetPackageManager -ErrorAction SilentlyContinue) {
-        Repair-WinGetPackageManager -Scope CurrentUser -ErrorAction SilentlyContinue
+        # Removing -Scope as it's not supported in all module versions
+        Repair-WinGetPackageManager -ErrorAction SilentlyContinue
     }
     
     # Register the AppInstaller itself for this user
     Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
 } catch {
-    Write-Output "Init Warning: `$($_.Exception.Message)"
+    Write-Output "Init Warning: `$(`$_.Exception.Message)"
 }
 
 # Aggressive fix for error 0x8a15000f (Source data missing)
