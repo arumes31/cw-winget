@@ -45,8 +45,14 @@ if (Test-IsAdmin) {
     }
     Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
 }
-# Source maintenance to fix error 0x8a15000f (Data required by the source is missing)
+# Aggressive fix for error 0x8a15000f (Source data missing)
+$WingetAppData = Join-Path `$env:LOCALAPPDATA "Microsoft\WinGet"
+if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -Force -ErrorAction SilentlyContinue }
+
 & winget source reset --force ; & winget source update
+# Trigger index creation with a dummy search
+& winget search "NuGet" --accept-source-agreements | Out-Null
+
 & winget upgrade --all --accept-package-agreements --accept-source-agreements --silent
 Stop-Transcript
 "@
@@ -100,6 +106,12 @@ try {
             $_ -notmatch "^SerializationVersion:" -and
             $_ -notmatch "^Transcript started" -and
             $_ -notmatch "^End time:" -and
+            $_ -notmatch "Doneo+" -and # Progress bars
+            $_ -notmatch "^Updating source:" -and
+            $_ -notmatch "^Resetting all sources" -and
+            $_ -notmatch "^The 'msstore' source requires" -and
+            $_ -notmatch "^Terms of Transaction" -and
+            $_ -notmatch "^The source requires the current machine" -and
             $_.Trim() -ne ""
         }
         $WingetLog = $CleanLog -join " ; "
