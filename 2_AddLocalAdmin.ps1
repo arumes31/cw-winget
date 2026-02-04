@@ -1,24 +1,23 @@
 # 2_AddLocalAdmin.ps1 - ConnectWise Automate compatible
 # Input/Output: Step|Username|Password|Result
 
-$State = "@state@"
+$State = '@state@'
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
-    Write-Error "Invalid state string: ${State}. Expected Step|Username|Password|Result"
+    Write-Error "Invalid state string. Expected Step|Username|Password|Result"
     exit 1
 }
 $Username = $Parts[1].Trim()
 $Password = $Parts[2].Trim()
 
 try {
-    $currentMembers = Get-LocalGroupMember -Group "Administrators"
-    if ($currentMembers.Name -contains "${Username}" -or $currentMembers.Name -contains "$env:COMPUTERNAME\${Username}") {
+    $currentMembers = Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue
+    if ($currentMembers -and ($currentMembers.Name -contains "${Username}" -or $currentMembers.Name -contains "$env:COMPUTERNAME\${Username}")) {
         Write-Output "2|${Username}|${Password}|AlreadyAdmin"
         return
     }
     Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
-    # Return updated state: Step|Username|Password|Result
     Write-Output "2|${Username}|${Password}|AddedToAdmin"
 }
 catch {

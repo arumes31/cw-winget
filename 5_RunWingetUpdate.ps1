@@ -1,24 +1,21 @@
 # 5_RunWingetUpdate.ps1 - ConnectWise Automate compatible
 # Input/Output: Step|Username|Password|Result|WingetLog
 
-$State = "@state@"
+$State = '@state@'
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
-    Write-Error "Invalid state string: ${State}. Expected Step|Username|Password|Result"
+    Write-Error "Invalid state string. Expected Step|Username|Password|Result"
     exit 1
 }
 $Username = $Parts[1].Trim()
 $Password = $Parts[2].Trim()
 
-# Check if running as Administrator for script setup
+# Elevation check
 if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
     Write-Error "Script 5 must be run as Administrator."
     exit 1
 }
-
-$TargetUser = $Username -replace '\s+', ''
-$TargetPass = $Password -replace '\s+', ''
 
 $TaskName = "TempWingetTask_$(Get-Random)"
 $WorkDir = "C:\eworx"
@@ -26,7 +23,6 @@ if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Fo
 $LogPath = Join-Path -Path $WorkDir -ChildPath "winget-log.txt"
 $TempScriptPath = Join-Path -Path $WorkDir -ChildPath "TempWingetUpdate_$(Get-Random).ps1"
 
-# Clear old log
 if (Test-Path $LogPath) { Remove-Item $LogPath -Force }
 
 $UpdateScriptContent = @"
@@ -58,14 +54,12 @@ $UpdateScriptContent | Out-File -FilePath $TempScriptPath -Encoding UTF8
 try {
     $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$TempScriptPath`""
     $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
-    
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
     
-    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -User $TargetUser -Password $TargetPass -RunLevel Highest -Force | Out-Null
+    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -User $Username -Password $Password -RunLevel Highest -Force | Out-Null
     
     Start-ScheduledTask -TaskName $TaskName
     
-    # Wait for task completion (maximum 2 hours)
     $timeout = 7200 
     $startTime = Get-Date
     $taskFinished = $false
@@ -84,7 +78,6 @@ try {
     $WingetLog = "No log found"
     if (Test-Path $LogPath) {
         $RawLog = Get-Content $LogPath
-        # Filter out transcript headers/footers and noise
         $CleanLog = $RawLog | Where-Object { 
             $_ -notmatch "^\*\*\*\*" -and 
             $_ -notmatch "^Windows PowerShell transcript" -and
@@ -107,25 +100,25 @@ try {
             $_.Trim() -ne ""
         }
         $WingetLog = $CleanLog -join " ; "
-        $WingetLog = $WingetLog -replace "\|", "/" # Clean for state string
+        $WingetLog = $WingetLog -replace "\|", "/" 
         if ($WingetLog.Length -gt 1000) { $WingetLog = $WingetLog.Substring(0, 1000) + "..." }
     }
 
     if (-not $taskFinished -or -not $taskInfo -or $taskInfo.LastTaskResult -ne 0) {
         $lastResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { "Timeout" }
-        Write-Error "Winget update task failed. TaskResult: $lastResult. Log: $WingetLog"
+        Write-Error "Winget update task failed. Result: $lastResult. Log: $WingetLog"
         exit 1
     }
     
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    # Strictly state only
     Write-Output "5|${Username}|${Password}|WingetUpdated|${WingetLog}"
-    Write-Host "Transcript saved to: $LogPath"
 }
 catch {
     Write-Error "Failed to run Winget update: $($_.Exception.Message)"
     exit 1
 }
 finally {
-    # We keep the winget-log.txt in C:\eworx for testing as requested
     if (Test-Path $TempScriptPath) { Remove-Item -Path $TempScriptPath -Force -ErrorAction SilentlyContinue }
+    # LogPath is preserved for testing as earlier requested, but not outputted to stdout
 }

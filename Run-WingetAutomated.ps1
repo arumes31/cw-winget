@@ -8,8 +8,8 @@ function Run-ScriptWithState {
     param($ScriptFile, $CurrentState)
     
     $Content = Get-Content (Join-Path $ScriptsDir $ScriptFile) -Raw
-    # Simulate @state@ injection
-    $InjectedContent = $Content -replace '@state@', $CurrentState
+    # Simulate @state@ injection using single quotes for literal safety
+    $InjectedContent = $Content -replace "'@state@'", "'$CurrentState'"
     
     $TempFile = Join-Path $env:TEMP "Simulate_$($ScriptFile)"
     $InjectedContent | Out-File $TempFile -Encoding UTF8
@@ -28,33 +28,34 @@ Write-Host "--- Starting Winget Automated Update Simulation ---" -ForegroundColo
 
 # Step 1: Create/Update Temp Admin
 Write-Host "Step 1: Create/Update Temp Admin..."
+# Step 1 is strictly one line now
 $WingetState = powershell.exe -File (Join-Path $ScriptsDir "1_CreateTempAdmin.ps1")
 if ($LASTEXITCODE -ne 0) { Write-Error "Step 1 Failed"; exit 1 }
-Write-Host "Current State: $WingetState"
+Write-Host "Captured State: $WingetState"
 
 # Step 2: Add to Administrators
 Write-Host "Step 2: Add to Administrators..."
 $WingetState = Run-ScriptWithState "2_AddLocalAdmin.ps1" $WingetState
-Write-Host "Current State: $WingetState"
+Write-Host "Captured State: $WingetState"
 
 # Step 3: Grant Logon As Batch
 Write-Host "Step 3: Grant SeBatchLogonRight..."
 $WingetState = Run-ScriptWithState "3_GrantLogonAsBatch.ps1" $WingetState
-Write-Host "Current State: $WingetState"
+Write-Host "Captured State: $WingetState"
 
 # Step 4: Enable Account
 Write-Host "Step 4: Enable Account..."
 $WingetState = Run-ScriptWithState "4_EnableAccount.ps1" $WingetState
-Write-Host "Current State: $WingetState"
+Write-Host "Captured State: $WingetState"
 
 # Step 5: Run Winget Update (Requires Elevation)
 Write-Host "Step 5: Run Winget Update (Wait for background task)..."
 $WingetState = Run-ScriptWithState "5_RunWingetUpdate.ps1" $WingetState
-Write-Host "Current State with Log: $WingetState"
+Write-Host "Captured State (Summary): $($WingetState.Substring(0, [Math]::Min(100, $WingetState.Length)))..."
 
 # Step 6: Disable Account
 Write-Host "Step 6: Disable Account..."
-$Output = Run-ScriptWithState "6_DisableTempAdmin.ps1" $WingetState
-Write-Host "Final Result: $Output"
+$FinalState = Run-ScriptWithState "6_DisableTempAdmin.ps1" $WingetState
+Write-Host "Final Result: $FinalState"
 
 Write-Host "--- Simulation Completed ---" -ForegroundColor Green

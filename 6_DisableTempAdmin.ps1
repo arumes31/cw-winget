@@ -1,11 +1,11 @@
 # 6_DisableTempAdmin.ps1 - ConnectWise Automate compatible
 # Input/Output: Step|Username|Password|Result
 
-$State = "@state@"
+$State = '@state@'
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
-    Write-Error "Invalid state string: `${State}`. Expected Step|Username|Password|Result"
+    Write-Error "Invalid state string. Expected Step|Username|Password|Result"
     exit 1
 }
 $Username = $Parts[1].Trim()

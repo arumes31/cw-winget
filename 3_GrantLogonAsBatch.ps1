@@ -1,11 +1,11 @@
 # 3_GrantLogonAsBatch.ps1 - ConnectWise Automate compatible
 # Input/Output: Step|Username|Password|Result
 
-$State = "@state@"
+$State = '@state@'
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
-    Write-Error "Invalid state string: `${State}`. Expected Step|Username|Password|Result"
+    Write-Error "Invalid state string. Expected Step|Username|Password|Result"
     exit 1
 }
 $Username = $Parts[1].Trim()
@@ -57,6 +57,6 @@ catch {
     exit 1
 }
 finally {
-    if (Test-Path $TmpFile) { Remove-Item $TmpFile }
-    if (Test-Path $CfgFile) { Remove-Item $CfgFile }
+    if (Test-Path $TmpFile) { Remove-Item $TmpFile -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $CfgFile) { Remove-Item $CfgFile -Force -ErrorAction SilentlyContinue }
 }
