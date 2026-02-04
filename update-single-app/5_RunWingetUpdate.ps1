@@ -88,7 +88,9 @@ Write-Output "DEBUG: Inner installapp value: '`$installapp'"
 if (`$installapp) { `$installapp = `$installapp.Trim() }
 
 `$checkNull = [string]::IsNullOrWhiteSpace(`$installapp)
-`$checkPlaceholder = (`$installapp -eq '@installapp@')
+# Construct sentinel at runtime to avoid replacement by CWA/Simulator
+`$sentinel = "@" + "installapp" + "@"
+`$checkPlaceholder = (`$installapp -eq `$sentinel)
 Write-Output "DEBUG: CheckNull=`$checkNull, CheckPlaceholder=`$checkPlaceholder"
 
 # Check and Install/Update Specific App
