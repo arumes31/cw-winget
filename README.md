@@ -1,30 +1,53 @@
-# Winget Automated Update Utility - Update All (ConnectWise Automate)
+# ![CW Winget Logo](project_logo_1770209634852.png) ConnectWise Automate Winget Wrapper
 
-This utility is designed for ConnectWise Automate workflows. It uses a single variable to pass state between steps via `@state@` placeholder injection.
+This project provides PowerShell scripts to integrate `winget` (Windows Package Manager) with ConnectWise Automate (CWA). It allows for automated application updates and installations running as a temporary administrative user, bypassing system context limitations.
+
+## Project Structure
+
+The project is divided into two main workflows:
+
+1.  **[update-all](./update-all/)**: Upgrades **all** installed packages on the system.
+2.  **[update-single-app](./update-single-app/)**: Checks for and installs/updates a **single specific application**.
+
+## Workflows
+
+### 1. Update All
+located in `./update-all/`
+
+This workflow attempts to run `winget upgrade --all` to update all packages available in the configured sources.
+
+**Usage:**
+- Designed to be run as a sequence of scripts in ConnectWise Automate.
+- Uses `@state@` variable replacement to maintain state (username/password/logs) between script steps.
+
+### 2. Update Single App
+located in `./update-single-app/`
+
+This workflow manages a specific application defined by the `@installapp@` variable.
+
+**Usage:**
+- **Variable Injection**: requires `@installapp@` to be replaced by the ID of the application (e.g., `Google.Chrome`) by the CWA script engine.
+- **Logic**:
+    - Checks if the application is available via `winget search`.
+    - If found, runs `winget install --id <AppId> --exact --force`.
+    - This command handles both fresh installations and updates to existing installations.
 
 ## ConnectWise Automate Integration
 
-The state variable format is: `Step|Username|Password|Result[|WingetLog]`
+Both workflows share the same state-passing mechanism:
 
-1.  **Step 1**: Run `1_CreateTempAdmin.ps1`. Store result in `%WingetState%`.
-2.  **Step 2**: Run `2_AddLocalAdmin.ps1`. Before running, Automate replaces `@state@` with `%WingetState%`. Store result back in `%WingetState%`.
-3.  **Step 3**: Run `3_GrantLogonAsBatch.ps1`. Store result in `%WingetState%`.
-4.  **Step 4**: Run `4_EnableAccount.ps1`. Store result in `%WingetState%`.
-5.  **Step 5**: Run `5_RunWingetUpdate.ps1` (Run as Admin). Outputs logs in the state. Store result in `%WingetState%`.
-6.  **Step 6**: Run `6_DisableTempAdmin.ps1`.
+**State Format:** `Step|Username|Password|Result[|WingetLog]`
 
-## Scripts
+### Script Sequence:
+1.  **1_CreateTempAdmin.ps1**: Creates a temporary local admin account.
+2.  **2_AddLocalAdmin.ps1**: Adds the temp user to the Administrators group.
+3.  **3_GrantLogonAsBatch.ps1**: Grants 'Logon as batch job' rights.
+4.  **4_EnableAccount.ps1**: Enables the account.
+5.  **5_RunWingetUpdate.ps1** (Run as Admin):
+    - **Update-All**: upgrades everything.
+    - **Update-Single-App**: installs/updates the specific target.
+6.  **6_DisableTempAdmin.ps1**: Disables the temp account and cleans up.
 
-- **1_CreateTempAdmin.ps1**: Outputs state, updates password if user exists.
-- **2_AddLocalAdmin.ps1**: Uses `@state@`, adds user to local admins.
-- **3_GrantLogonAsBatch.ps1**: Uses `@state@`, grants 'Logon as batch job'.
-- **4_EnableAccount.ps1**: Uses `@state@`, enables the account.
-- **5_RunWingetUpdate.ps1**: Uses `@state@`, runs upgrades. Outputs: `5|User|Pass|WingetUpdated|LogData`.
-- **6_DisableTempAdmin.ps1**: Uses `@state@`, disables the account.
-
-## Technical Details
-
-- **Placeholder Injection**: Scripts 2-6 use `$State = "@state@"` for CW Automate compatibility.
-- **Robustness**: Step 5 captures up to 1000 characters of the Winget log, cleaned for state-string compatibility (newlines replaced with `;`, pipes replaced with `/`).
-- **PowerShell 5.1** compatible.
-- **Idempotency**: All scripts are safe to run multiple times.
+## Requirements
+- Windows 10/11 or Server 2019+ (with App Installer/Winget support).
+- PowerShell 5.1.
