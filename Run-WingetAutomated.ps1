@@ -4,7 +4,7 @@
 $ScriptsDir = Get-Location
 $WingetState = ""
 
-function Run-ScriptWithState {
+function Invoke-ScriptWithState {
     param($ScriptFile, $CurrentState)
     
     $Content = Get-Content (Join-Path $ScriptsDir $ScriptFile) -Raw
@@ -35,27 +35,27 @@ Write-Host "Captured State: $WingetState"
 
 # Step 2: Add to Administrators
 Write-Host "Step 2: Add to Administrators..."
-$WingetState = Run-ScriptWithState "2_AddLocalAdmin.ps1" $WingetState
+$WingetState = Invoke-ScriptWithState "2_AddLocalAdmin.ps1" $WingetState
 Write-Host "Captured State: $WingetState"
 
 # Step 3: Grant Logon As Batch
 Write-Host "Step 3: Grant SeBatchLogonRight..."
-$WingetState = Run-ScriptWithState "3_GrantLogonAsBatch.ps1" $WingetState
+$WingetState = Invoke-ScriptWithState "3_GrantLogonAsBatch.ps1" $WingetState
 Write-Host "Captured State: $WingetState"
 
 # Step 4: Enable Account
 Write-Host "Step 4: Enable Account..."
-$WingetState = Run-ScriptWithState "4_EnableAccount.ps1" $WingetState
+$WingetState = Invoke-ScriptWithState "4_EnableAccount.ps1" $WingetState
 Write-Host "Captured State: $WingetState"
 
 # Step 5: Run Winget Update (Requires Elevation)
 Write-Host "Step 5: Run Winget Update (Wait for background task)..."
-$WingetState = Run-ScriptWithState "5_RunWingetUpdate.ps1" $WingetState
+$WingetState = Invoke-ScriptWithState "5_RunWingetUpdate.ps1" $WingetState
 Write-Host "Captured State (Summary): $($WingetState.Substring(0, [Math]::Min(100, $WingetState.Length)))..."
 
 # Step 6: Disable Account
 Write-Host "Step 6: Disable Account..."
-$FinalState = Run-ScriptWithState "6_DisableTempAdmin.ps1" $WingetState
+$FinalState = Invoke-ScriptWithState "6_DisableTempAdmin.ps1" $WingetState
 Write-Host "Final Result: $FinalState"
 
 Write-Host "--- Simulation Completed ---" -ForegroundColor Green
