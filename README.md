@@ -1,29 +1,29 @@
 # Winget Automated Update Utility (ConnectWise Automate)
 
-This utility is designed to run in a ConnectWise Automate workflow. It uses a single variable to pass state (credentials and status) between script steps.
+This utility is designed for ConnectWise Automate workflows. It uses a single variable to pass state between steps via `@state@` placeholder injection.
 
 ## ConnectWise Automate Integration
 
 The state variable format is: `Step|Username|Password|Result`
 
 1.  **Step 1**: Run `1_CreateTempAdmin.ps1`. Store result in `%WingetState%`.
-2.  **Step 2**: Run `2_AddLocalAdmin.ps1 -State "%WingetState%"`. Update `%WingetState%` with the result.
-3.  **Step 3**: Run `3_GrantLogonAsBatch.ps1 -State "%WingetState%"`. Update `%WingetState%` with the result.
-4.  **Step 4**: Run `4_EnableAccount.ps1 -State "%WingetState%"`. Update `%WingetState%` with the result.
-5.  **Step 5**: Run `5_RunWingetUpdate.ps1 -State "%WingetState%"`. Update `%WingetState%` with the result. (Run as Admin).
-6.  **Step 6**: Run `6_RemoveTempAdmin.ps1 -State "%WingetState%"`.
+2.  **Step 2**: Run `2_AddLocalAdmin.ps1`. Before running, Automate replaces `@state@` with `%WingetState%`. Store result back in `%WingetState%`.
+3.  **Step 3**: Run `3_GrantLogonAsBatch.ps1`. Store result in `%WingetState%`.
+4.  **Step 4**: Run `4_EnableAccount.ps1`. Store result in `%WingetState%`.
+5.  **Step 5**: Run `5_RunWingetUpdate.ps1` (Run as Admin). Store result in `%WingetState%`.
+6.  **Step 6**: Run `6_DisableTempAdmin.ps1`.
 
 ## Scripts
 
-- **1_CreateTempAdmin.ps1**: Outputs `1|Username|Password|UserCreated`.
-- **2_AddLocalAdmin.ps1**: Outputs `2|Username|Password|AddedToAdmin`.
-- **3_GrantLogonAsBatch.ps1**: Outputs `3|Username|Password|BatchLogonGranted`.
-- **4_EnableAccount.ps1**: Outputs `4|Username|Password|AccountEnabled`.
-- **5_RunWingetUpdate.ps1**: Outputs `5|Username|Password|WingetUpdated`.
-- **6_RemoveTempAdmin.ps1**: Outputs `6|Username|Password|UserRemoved`.
+- **1_CreateTempAdmin.ps1**: Outputs state, updates password if user exists.
+- **2_AddLocalAdmin.ps1**: Uses `@state@`, adds user to local admins.
+- **3_GrantLogonAsBatch.ps1**: Uses `@state@`, grants 'Logon as batch job'.
+- **4_EnableAccount.ps1**: Uses `@state@`, enables the account.
+- **5_RunWingetUpdate.ps1**: Uses `@state@`, runs winget upgrades via Scheduled Task.
+- **6_DisableTempAdmin.ps1**: Uses `@state@`, disables the account.
 
-## Technical Specs
+## Technical Details
 
+- **Placeholder Injection**: Scripts 2-6 replace `param(...)` with a direct `$State = "@state@"` assignment for CW Automate compatibility.
 - **PowerShell 5.1** compatible.
-- Encapsulated string interpolation `${VarName}` for parser safety.
-- Handles standard user/password sanitation for Windows Task Scheduler.
+- **Security**: Account is persistent but disabled when not in use.

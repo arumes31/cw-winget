@@ -11,17 +11,12 @@ if (-not (Get-Module -ListAvailable Microsoft.PowerShell.LocalAccounts)) {
 }
 
 $Username = "TempAutomateAdmin"
-$ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
-if ($ExistingUser) {
-    Write-Error "User ${Username} already exists."
-    exit 1
-}
 
 $PasswordLength = 16
 $CharacterSets = @(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
-    "0123456789"
+    "01234456789"
     "!@#$%^&*()_+"
 )
 
@@ -47,12 +42,23 @@ $Password = -join $PasswordArray
 
 try {
     $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-    New-LocalUser -Name $Username -Password $SecurePassword -Description "Temporary Automation Admin" -FullName "Temp Automate Admin" | Out-Null
+    
+    $ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
+    if ($ExistingUser) {
+        Write-Host "User ${Username} already exists. Updating password..."
+        Set-LocalUser -Name $Username -Password $SecurePassword -ErrorAction Stop
+        $Result = "PasswordUpdated"
+    }
+    else {
+        Write-Host "Creating new user ${Username}..."
+        New-LocalUser -Name $Username -Password $SecurePassword -Description "Temporary Automation Admin" -FullName "Temp Automate Admin" -ErrorAction Stop | Out-Null
+        $Result = "UserCreated"
+    }
     
     # Final Output: Step|Username|Password|Result
-    Write-Output "1|${Username}|${Password}|UserCreated"
+    Write-Output "1|${Username}|${Password}|${Result}"
 }
 catch {
-    Write-Error "Failed to create user: $($_.Exception.Message)"
+    Write-Error "Failed to manage user ${Username}: $($_.Exception.Message)"
     exit 1
 }

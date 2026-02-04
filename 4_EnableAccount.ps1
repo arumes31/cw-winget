@@ -1,10 +1,7 @@
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$State
-)
-
 # 4_EnableAccount.ps1 - ConnectWise Automate compatible
 # Input/Output: Step|Username|Password|Result
+
+$State = "@state@"
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
