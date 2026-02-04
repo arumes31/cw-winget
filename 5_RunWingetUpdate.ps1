@@ -45,6 +45,8 @@ if (Test-IsAdmin) {
     }
     Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
 }
+# Source maintenance to fix error 0x8a15000f (Data required by the source is missing)
+& winget source reset --force ; & winget source update
 & winget upgrade --all --accept-package-agreements --accept-source-agreements --silent
 Stop-Transcript
 "@
@@ -97,6 +99,7 @@ try {
             $_ -notmatch "^PSRemotingProtocolVersion:" -and
             $_ -notmatch "^SerializationVersion:" -and
             $_ -notmatch "^Transcript started" -and
+            $_ -notmatch "^End time:" -and
             $_.Trim() -ne ""
         }
         $WingetLog = $CleanLog -join " ; "
