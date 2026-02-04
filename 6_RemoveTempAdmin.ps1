@@ -1,13 +1,15 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Username
+    [hashtable]$State
 )
+
+$Username = $State.Username
 
 try {
     Remove-LocalUser -Name $Username -ErrorAction Stop
-    Write-Host "Successfully removed temporary admin user: $Username"
 }
 catch {
-    Write-Error "Failed to remove user $Username: $($_.Exception.Message)"
-    exit 1
+    $State.Error = "Failed to remove user $Username: $($_.Exception.Message)"
 }
+
+return $State
