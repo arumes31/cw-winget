@@ -1,5 +1,5 @@
 # 5_RunWingetUpdate.ps1 - ConnectWise Automate compatible
-# Input/Output: Step|Username|Password|Result
+# Input/Output: Step|Username|Password|Result|WingetLog
 
 $State = "@state@"
 
@@ -23,10 +23,14 @@ $TargetPass = $Password -replace '\s+', ''
 $TaskName = "TempWingetTask_$(Get-Random)"
 $WorkDir = "C:\eworx"
 if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
+$LogPath = Join-Path -Path $WorkDir -ChildPath "winget-log.txt"
 $TempScriptPath = Join-Path -Path $WorkDir -ChildPath "TempWingetUpdate_$(Get-Random).ps1"
 
+# Clear old log
+if (Test-Path $LogPath) { Remove-Item $LogPath -Force }
+
 $UpdateScriptContent = @"
-Start-Transcript -Path '$WorkDir\winget-log.txt' -Append
+Start-Transcript -Path '$LogPath' -Append
 function Test-IsAdmin {
     `$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
     `$principal = New-Object Security.Principal.WindowsPrincipal(`$currentUser)
@@ -55,7 +59,6 @@ try {
     $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$TempScriptPath`""
     $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
     
-    # We omit ExecutionTimeLimit entirely to avoid serialization bugs in PS 5.1
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
     
     Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -User $TargetUser -Password $TargetPass -RunLevel Highest -Force | Out-Null
@@ -78,14 +81,21 @@ try {
         if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) { break }
     } while ($true)
 
+    $WingetLog = "No log found"
+    if (Test-Path $LogPath) {
+        $WingetLog = Get-Content $LogPath | Out-String
+        $WingetLog = $WingetLog -replace "[\r\n]+", " ; " -replace "\|", "/" # Clean for state string
+        if ($WingetLog.Length -gt 1000) { $WingetLog = $WingetLog.Substring(0, 1000) + "..." }
+    }
+
     if (-not $taskFinished -or -not $taskInfo -or $taskInfo.LastTaskResult -ne 0) {
-        $lastResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { "Timeout or No Info" }
-        Write-Error "Winget update task failed or timed out. Result: $lastResult"
+        $lastResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { "Timeout" }
+        Write-Error "Winget update task failed. TaskResult: $lastResult. Log: $WingetLog"
         exit 1
     }
     
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-    Write-Output "5|${Username}|${Password}|WingetUpdated"
+    Write-Output "5|${Username}|${Password}|WingetUpdated|${WingetLog}"
 }
 catch {
     Write-Error "Failed to run Winget update: $($_.Exception.Message)"

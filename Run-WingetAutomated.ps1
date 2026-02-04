@@ -1,51 +1,60 @@
-# Master script to simulate ConnectWise Automate workflow locally
-# Mirrors the Step|Username|Password|Result string passing pattern with injection simulation.
+# Run-WingetAutomated.ps1 - Master Simulation Script (PowerShell 5.1)
+# Simulated wrapper for ConnectWise Automate workflow
 
-$ScriptDir = $PSScriptRoot
+$ScriptsDir = Get-Location
+$WingetState = ""
 
 function Run-ScriptWithState {
-    param([string]$File, [string]$CurrentState)
-    $Content = Get-Content $File -Raw
+    param($ScriptFile, $CurrentState)
+    
+    $Content = Get-Content (Join-Path $ScriptsDir $ScriptFile) -Raw
+    # Simulate @state@ injection
     $InjectedContent = $Content -replace '@state@', $CurrentState
-    $TempFile = Join-Path $env:TEMP "injected_$(Get-Random).ps1"
-    $InjectedContent | Set-Content $TempFile
+    
+    $TempFile = Join-Path $env:TEMP "Simulate_$($ScriptFile)"
+    $InjectedContent | Out-File $TempFile -Encoding UTF8
+    
     try {
-        & $TempFile
+        $Result = powershell.exe -File $TempFile -ErrorAction Stop
+        if ($LASTEXITCODE -ne 0) { throw "Script failed with exit code $LASTEXITCODE" }
+        return $Result
     }
     finally {
-        Remove-Item $TempFile -ErrorAction SilentlyContinue
+        if (Test-Path $TempFile) { Remove-Item $TempFile -Force }
     }
 }
 
-Write-Host "--- Step 1: Managing Temporary Admin (Create/Update) ---" -ForegroundColor Cyan
-# Step 1 doesn't use @state@ as it initiates it
-$State = & "${ScriptDir}\1_CreateTempAdmin.ps1"
-if ($LASTEXITCODE -ne 0) { exit 1 }
-Write-Host "Current State: ${State}"
+Write-Host "--- Starting Winget Automated Update Simulation ---" -ForegroundColor Cyan
 
-Write-Host "--- Step 2: Adding to Local Admins ---" -ForegroundColor Cyan
-$State = Run-ScriptWithState -File "${ScriptDir}\2_AddLocalAdmin.ps1" -CurrentState "${State}"
-if ($LASTEXITCODE -ne 0) { exit 1 }
-Write-Host "Current State: ${State}"
+# Step 1: Create/Update Temp Admin
+Write-Host "Step 1: Create/Update Temp Admin..."
+$WingetState = powershell.exe -File (Join-Path $ScriptsDir "1_CreateTempAdmin.ps1")
+if ($LASTEXITCODE -ne 0) { Write-Error "Step 1 Failed"; exit 1 }
+Write-Host "Current State: $WingetState"
 
-Write-Host "--- Step 3: Granting Logon as Batch Job ---" -ForegroundColor Cyan
-$State = Run-ScriptWithState -File "${ScriptDir}\3_GrantLogonAsBatch.ps1" -CurrentState "${State}"
-if ($LASTEXITCODE -ne 0) { exit 1 }
-Write-Host "Current State: ${State}"
+# Step 2: Add to Administrators
+Write-Host "Step 2: Add to Administrators..."
+$WingetState = Run-ScriptWithState "2_AddLocalAdmin.ps1" $WingetState
+Write-Host "Current State: $WingetState"
 
-Write-Host "--- Step 4: Enabling Account ---" -ForegroundColor Cyan
-$State = Run-ScriptWithState -File "${ScriptDir}\4_EnableAccount.ps1" -CurrentState "${State}"
-if ($LASTEXITCODE -ne 0) { exit 1 }
-Write-Host "Current State: ${State}"
+# Step 3: Grant Logon As Batch
+Write-Host "Step 3: Grant SeBatchLogonRight..."
+$WingetState = Run-ScriptWithState "3_GrantLogonAsBatch.ps1" $WingetState
+Write-Host "Current State: $WingetState"
 
-Write-Host "--- Step 5: Running Winget Update ---" -ForegroundColor Cyan
-$State = Run-ScriptWithState -File "${ScriptDir}\5_RunWingetUpdate.ps1" -CurrentState "${State}"
-if ($LASTEXITCODE -ne 0) { exit 1 }
-Write-Host "Current State: ${State}"
+# Step 4: Enable Account
+Write-Host "Step 4: Enable Account..."
+$WingetState = Run-ScriptWithState "4_EnableAccount.ps1" $WingetState
+Write-Host "Current State: $WingetState"
 
-Write-Host "--- Step 6: Disabling Temporary Admin ---" -ForegroundColor Cyan
-$State = Run-ScriptWithState -File "${ScriptDir}\6_DisableTempAdmin.ps1" -CurrentState "${State}"
-if ($LASTEXITCODE -ne 0) { exit 1 }
-Write-Host "Final State: ${State}"
+# Step 5: Run Winget Update (Requires Elevation)
+Write-Host "Step 5: Run Winget Update (Wait for background task)..."
+$WingetState = Run-ScriptWithState "5_RunWingetUpdate.ps1" $WingetState
+Write-Host "Current State with Log: $WingetState"
 
-Write-Host "Automation sequence finished." -ForegroundColor Green
+# Step 6: Disable Account
+Write-Host "Step 6: Disable Account..."
+$Output = Run-ScriptWithState "6_DisableTempAdmin.ps1" $WingetState
+Write-Host "Final Result: $Output"
+
+Write-Host "--- Simulation Completed ---" -ForegroundColor Green
