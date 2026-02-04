@@ -5,11 +5,15 @@ $ScriptsDir = Get-Location
 $WingetState = ""
 
 function Invoke-ScriptWithState {
-    param($ScriptFile, $CurrentState)
+    param($ScriptFile, $CurrentState, $InstallApp = "")
     
     $Content = Get-Content (Join-Path $ScriptsDir $ScriptFile) -Raw
     # Simulate @state@ injection using single quotes for literal safety
     $InjectedContent = $Content -replace "'@state@'", "'$CurrentState'"
+    
+    if (-not [string]::IsNullOrWhiteSpace($InstallApp)) {
+        $InjectedContent = $InjectedContent -replace "'@installapp@'", "'$InstallApp'"
+    }
     
     $TempFile = Join-Path $env:TEMP "Simulate_$($ScriptFile)"
     $InjectedContent | Out-File $TempFile -Encoding UTF8
@@ -50,7 +54,7 @@ Write-Host "Captured State: $WingetState"
 
 # Step 5: Run Winget Update (Requires Elevation)
 Write-Host "Step 5: Run Winget Update (Wait for background task)..."
-$WingetState = Invoke-ScriptWithState "5_RunWingetUpdate.ps1" $WingetState
+$WingetState = Invoke-ScriptWithState "5_RunWingetUpdate.ps1" $WingetState "Google.Chrome"
 Write-Host "Captured State (Summary): $($WingetState.Substring(0, [Math]::Min(100, $WingetState.Length)))..."
 
 # Step 6: Disable Account
