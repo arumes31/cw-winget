@@ -12,6 +12,8 @@ if ($Parts.Count -lt 3) {
 $Username = $Parts[1].Trim()
 $Password = $Parts[2].Trim()
 
+Write-Host "DEBUG: Outer installapp value: '$installapp'"
+
 # Elevation check for setup
 if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
     Write-Host "Elevating setup process..."
@@ -80,6 +82,7 @@ Start-Sleep -Seconds 10
 
 # Pass variables from outer scope to inner scope
 `$installapp = '$installapp'
+Write-Output "DEBUG: Inner installapp value: '`$installapp'"
 
 # Check and Install/Update Specific App
 if (-not [string]::IsNullOrWhiteSpace(`$installapp) -and `$installapp -ne '@installapp@') {
