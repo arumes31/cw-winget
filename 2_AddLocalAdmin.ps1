@@ -12,6 +12,11 @@ $Username = $Parts[1].Trim()
 $Password = $Parts[2].Trim()
 
 try {
+    $currentMembers = Get-LocalGroupMember -Group "Administrators"
+    if ($currentMembers.Name -contains "${Username}" -or $currentMembers.Name -contains "$env:COMPUTERNAME\${Username}") {
+        Write-Output "2|${Username}|${Password}|AlreadyAdmin"
+        return
+    }
     Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction Stop
     # Return updated state: Step|Username|Password|Result
     Write-Output "2|${Username}|${Password}|AddedToAdmin"

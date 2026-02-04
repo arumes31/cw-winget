@@ -5,14 +5,24 @@ $State = "@state@"
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
-    Write-Error "Invalid state string: ${State}. Expected Step|Username|Password|Result"
+    Write-Error "Invalid state string: `${State}`. Expected Step|Username|Password|Result"
     exit 1
 }
 $Username = $Parts[1].Trim()
 $Password = $Parts[2].Trim()
 
 try {
-    Write-Host "Disabling temporary admin user: ${Username}..."
+    $User = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
+    if (-not $User) {
+        Write-Output "6|${Username}|${Password}|UserNotFound"
+        return
+    }
+
+    if (-not $User.Enabled) {
+        Write-Output "6|${Username}|${Password}|AlreadyDisabled"
+        return
+    }
+
     Disable-LocalUser -Name $Username -ErrorAction Stop
     Write-Output "6|${Username}|${Password}|UserDisabled"
 }
