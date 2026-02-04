@@ -119,11 +119,13 @@ try {
     
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     Write-Output "5|${Username}|${Password}|WingetUpdated|${WingetLog}"
+    Write-Host "Transcript saved to: $LogPath"
 }
 catch {
     Write-Error "Failed to run Winget update: $($_.Exception.Message)"
     exit 1
 }
 finally {
+    # We keep the winget-log.txt in C:\eworx for testing as requested
     if (Test-Path $TempScriptPath) { Remove-Item -Path $TempScriptPath -Force -ErrorAction SilentlyContinue }
 }
