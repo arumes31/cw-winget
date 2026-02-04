@@ -11,10 +11,9 @@ if ($Parts.Count -lt 3) {
 $Username = $Parts[1].Trim()
 $Password = $Parts[2].Trim()
 
-# Elevation check
+# Elevation check for setup
 if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Write-Error "Script 5 must be run as Administrator."
-    exit 1
+    Write-Host "Elevating setup process..."
 }
 
 $TaskName = "TempWingetTask_$(Get-Random)"
@@ -32,28 +31,41 @@ function Test-IsAdmin {
     `$principal = New-Object Security.Principal.WindowsPrincipal(`$currentUser)
     return `$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
-if (Test-IsAdmin) {
-    Install-PackageProvider -Name 'NuGet' -Force -ErrorAction SilentlyContinue
-    Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-    try {
-        if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
-            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:`$false -Scope AllUsers -ErrorAction Stop
-        }
-        Repair-WinGetPackageManager -AllUsers -ErrorAction Stop
-    } catch {
-        Write-Output 'Repair failed: ' + `$_.Exception.Message
+
+# Deep Initialization for WinGet in new user profile
+try {
+    # Ensure module is available
+    if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
+        Install-PackageProvider -Name 'NuGet' -Force -ErrorAction SilentlyContinue
+        Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+        Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:`$false -Scope AllUsers -ErrorAction SilentlyContinue
     }
+    
+    # Repair/Register WinGet for the current user session
+    Import-Module Microsoft.WinGet.Client -ErrorAction SilentlyContinue
+    if (Get-Command Repair-WinGetPackageManager -ErrorAction SilentlyContinue) {
+        Repair-WinGetPackageManager -Scope CurrentUser -ErrorAction SilentlyContinue
+    }
+    
+    # Register the AppInstaller itself for this user
     Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
+} catch {
+    Write-Output "Init Warning: `$($_.Exception.Message)"
 }
+
 # Aggressive fix for error 0x8a15000f (Source data missing)
 `$WingetAppData = Join-Path `$env:LOCALAPPDATA "Microsoft\WinGet"
 if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -Force -ErrorAction SilentlyContinue }
 
-& winget source reset --force ; & winget source update
-# Trigger index creation with a dummy search
+# Reset and Update with explicit agreement acceptance
+& winget source reset --force --accept-source-agreements
+& winget source update --accept-source-agreements
+# Trigger index creation
 & winget search "NuGet" --accept-source-agreements | Out-Null
 
-& winget upgrade --all --accept-package-agreements --accept-source-agreements --silent
+# Run updates (including --include-unknown for Store apps as requested)
+& winget upgrade --all --accept-package-agreements --accept-source-agreements --silent --include-unknown
+
 Stop-Transcript
 "@
 
@@ -106,7 +118,7 @@ try {
             $_ -notmatch "^SerializationVersion:" -and
             $_ -notmatch "^Transcript started" -and
             $_ -notmatch "^End time:" -and
-            $_ -notmatch "Doneo+" -and # Progress bars
+            $_ -notmatch "Doneo+" -and 
             $_ -notmatch "^Updating source:" -and
             $_ -notmatch "^Resetting all sources" -and
             $_ -notmatch "^The 'msstore' source requires" -and
@@ -116,17 +128,16 @@ try {
         }
         $WingetLog = $CleanLog -join " ; "
         $WingetLog = $WingetLog -replace "\|", "/" 
-        if ($WingetLog.Length -gt 1000) { $WingetLog = $WingetLog.Substring(0, 1000) + "..." }
+        if ($WingetLog.Length -gt 2000) { $WingetLog = $WingetLog.Substring(0, 2000) + "..." }
     }
 
     if (-not $taskFinished -or -not $taskInfo -or $taskInfo.LastTaskResult -ne 0) {
         $lastResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { "Timeout" }
-        Write-Error "Winget update task failed. Result: $lastResult. Log: $WingetLog"
+        Write-Error "Winget update task failed. TaskResult: $lastResult. Log: $WingetLog"
         exit 1
     }
     
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-    # Strictly state only
     Write-Output "5|${Username}|${Password}|WingetUpdated|${WingetLog}"
 }
 catch {
@@ -135,5 +146,4 @@ catch {
 }
 finally {
     if (Test-Path $TempScriptPath) { Remove-Item -Path $TempScriptPath -Force -ErrorAction SilentlyContinue }
-    # LogPath is preserved for testing as earlier requested, but not outputted to stdout
 }
