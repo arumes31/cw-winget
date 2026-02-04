@@ -60,7 +60,7 @@ if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -For
 
 # Reset and Update with explicit agreement acceptance where supported
 & winget source reset --force
-& winget source update --accept-source-agreements
+& winget source update
 # Trigger index creation
 & winget search "NuGet" --accept-source-agreements | Out-Null
 
@@ -126,9 +126,17 @@ try {
             $_ -notmatch "^The 'msstore' source requires" -and
             $_ -notmatch "^Terms of Transaction" -and
             $_ -notmatch "^The source requires the current machine" -and
-            $_ -notmatch "^usage: winget source reset" -and
+            $_ -notmatch "^usage: winget" -and
             $_ -notmatch "^The following arguments are available:" -and
             $_ -notmatch "^The following options are available:" -and
+            $_ -notmatch "^The following command aliases are available" -and
+            $_ -notmatch "^Prompts the user to press any key" -and
+            $_ -notmatch "^--logs,--open-logs" -and
+            $_ -notmatch "^--verbose,--verbose-logs" -and
+            $_ -notmatch "^--nowarn,--ignore-warnings" -and
+            $_ -notmatch "^--disable-interactivity" -and
+            $_ -notmatch "^--proxy" -and
+            $_ -notmatch "^--no-proxy" -and
             $_.Trim() -ne ""
         }
         $WingetLog = $CleanLog -join " ; "
