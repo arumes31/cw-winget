@@ -77,18 +77,22 @@ Add-AppxPackage -Path "https://cdn.winget.microsoft.com/cache/source.msix" -Erro
 # Stabilization delay to ensure source index is flushed to disk
 Start-Sleep -Seconds 10
 
+
+# Pass variables from outer scope to inner scope
+`$installapp = '$installapp'
+
 # Check and Install/Update Specific App
-if (-not [string]::IsNullOrWhiteSpace($installapp) -and $installapp -ne '@installapp@') {
-    Write-Output "Checking for application: $installapp"
+if (-not [string]::IsNullOrWhiteSpace(`$installapp) -and `$installapp -ne '@installapp@') {
+    Write-Output "Checking for application: `$installapp"
     # Try to find the package first
-    $searchResult = & winget search --id $installapp --accept-source-agreements
+    `$searchResult = & winget search --id `$installapp --accept-source-agreements
     
-    if ($LASTEXITCODE -eq 0) {
-        Write-Output "Installing/Updating application: $installapp"
+    if (`$LASTEXITCODE -eq 0) {
+        Write-Output "Installing/Updating application: `$installapp"
         # We use install because it handles both fresh install and upgrade for most packages
-        & winget install --id $installapp --exact --accept-package-agreements --accept-source-agreements --scope machine --force --silent
+        & winget install --id `$installapp --exact --accept-package-agreements --accept-source-agreements --scope machine --force --silent
     } else {
-        Write-Warning "Application '$installapp' not found in sources."
+        Write-Warning "Application '`$installapp' not found in sources."
     }
 } else {
     Write-Warning "No application specified in installapp variable."
