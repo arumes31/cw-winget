@@ -12,8 +12,14 @@ $Username = $Parts[1].Trim()
 $Password = $Parts[2].Trim()
 
 try {
-    $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
-    $AdminGroup = $AdminSid.Translate([System.Security.Principal.NTAccount]).Value
+    # Robust localized Administrators group lookup
+    $AdminGroup = (Get-LocalGroup -SID "S-1-5-32-544" -ErrorAction SilentlyContinue).Name
+    if (-not $AdminGroup) {
+        # Fallback to SID translation and prefix stripping
+        $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+        $Translated = $AdminSid.Translate([System.Security.Principal.NTAccount]).Value
+        $AdminGroup = $Translated.Split('\')[-1]
+    }
 
     $currentMembers = Get-LocalGroupMember -Group $AdminGroup -ErrorAction SilentlyContinue
     if ($currentMembers -and ($currentMembers.Name -contains "${Username}" -or $currentMembers.Name -contains "$env:COMPUTERNAME\${Username}")) {
@@ -24,8 +30,6 @@ try {
     Write-Output "2|${Username}|${Password}|AddedToAdmin"
 }
 catch {
-    $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
-    $AdminGroup = $AdminSid.Translate([System.Security.Principal.NTAccount]).Value
     Write-Error "Failed to add ${Username} to $($AdminGroup): $($_.Exception.Message)"
     exit 1
 }

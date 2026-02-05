@@ -26,8 +26,13 @@ if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Fo
 # Explicitly grant Edit permission to localized Administrators group (S-1-5-32-544)
 # to ensure Start-Transcript and File operations work within the Scheduled Task
 try {
-    $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
-    $AdminGroup = $AdminSid.Translate([System.Security.Principal.NTAccount]).Value
+    # Robust localized Administrators group lookup
+    $AdminGroup = (Get-LocalGroup -SID "S-1-5-32-544" -ErrorAction SilentlyContinue).Name
+    if (-not $AdminGroup) {
+        $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+        $Translated = $AdminSid.Translate([System.Security.Principal.NTAccount]).Value
+        $AdminGroup = $Translated.Split('\')[-1]
+    }
     
     $Acl = Get-Acl $WorkDir
     $Ar = New-Object System.Security.AccessControl.FileSystemAccessRule($AdminGroup, "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
