@@ -20,11 +20,14 @@ $TaskName = "TempWingetTask_$(Get-Random)"
 $WorkDir = "C:\eworx"
 if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
 
-# Explicitly grant Edit permission to Administrators (which Includes TempAutomateAdmin) 
+# Explicitly grant Edit permission to localized Administrators group (S-1-5-32-544)
 # to ensure Start-Transcript and File operations work within the Scheduled Task
 try {
+    $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+    $AdminGroup = $AdminSid.Translate([System.Security.Principal.NTAccount]).Value
+    
     $Acl = Get-Acl $WorkDir
-    $Ar = New-Object System.Security.AccessControl.FileSystemAccessRule("Administrators", "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
+    $Ar = New-Object System.Security.AccessControl.FileSystemAccessRule($AdminGroup, "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
     $Acl.AddAccessRule($Ar)
     Set-Acl $WorkDir $Acl
 }
