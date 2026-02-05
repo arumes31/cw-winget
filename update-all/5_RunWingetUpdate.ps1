@@ -51,33 +51,33 @@ try {
 
     # Deep Initialization for WinGet in new user profile
     try {
-        # Ensure module is available
+        # 1. Direct Source Injection & AppInstaller Registration (CRITICAL FIRST STEP)
+        # This ensures the winget executable is present and registered before discovery
+        Add-AppxPackage -Path "https://cdn.winget.microsoft.com/cache/source.msix" -ErrorAction SilentlyContinue
+        Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
+        
+        # 2. Module & Repair (Ensures latest client logic)
         if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
             Install-PackageProvider -Name 'NuGet' -Force -ErrorAction SilentlyContinue
             Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-            # Fix: Using CurrentUser scope to avoid Administrator rights requirement for AllUsers
-            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:`$false -Scope CurrentUser -ErrorAction SilentlyContinue
+            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:$false -Scope CurrentUser -ErrorAction SilentlyContinue
         }
         
-        # Repair/Register WinGet for the current user session
         Import-Module Microsoft.WinGet.Client -ErrorAction SilentlyContinue
         if (Get-Command Repair-WinGetPackageManager -ErrorAction SilentlyContinue) {
-            # Removing -Scope as it's not supported in all module versions
             Repair-WinGetPackageManager -ErrorAction SilentlyContinue
         }
-        
-        # Register the AppInstaller itself for this user
-        Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
     } catch {
         Write-Output "Init Warning: `$(`$_.Exception.Message)"
     }
 
-    # Robust WinGet command discovery
+    # 3. Robust WinGet command discovery (AFTER registration)
     `$WingetCmd = "winget"
     if (-not (Get-Command "winget" -ErrorAction SilentlyContinue)) {
         `$PotentialPaths = @(
             "`$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe",
-            "`$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe"
+            "`$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe",
+            "`$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\winget.exe"
         )
         foreach (`$Path in `$PotentialPaths) {
             `$ResolvedPath = Resolve-Path `$Path -ErrorAction SilentlyContinue
@@ -100,8 +100,7 @@ try {
     & `$WingetCmd source remove --name winget 2>&1 | Out-Null
     & `$WingetCmd source remove --name msstore 2>&1 | Out-Null
 
-    # Direct Source Injection (User Suggestion)
-    # This bypasses potential download/caching issues by installing the source package directly
+    # Re-inject source to be absolutely sure
     Add-AppxPackage -Path "https://cdn.winget.microsoft.com/cache/source.msix" -ErrorAction SilentlyContinue
 
     # Reset and Update
