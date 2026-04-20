@@ -19,6 +19,28 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 $TaskName = "TempWingetTask_$(Get-Random)"
 $WorkDir = "C:\eworx"
 if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
+<<<<<<< Updated upstream
+=======
+
+# Explicitly grant Edit permission to localized Administrators group (S-1-5-32-544)
+try {
+    $AdminGroup = (Get-LocalGroup -SID "S-1-5-32-544" -ErrorAction SilentlyContinue).Name
+    if (-not $AdminGroup) {
+        $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+        $Translated = $AdminSid.Translate([System.Security.Principal.NTAccount]).Value
+        $AdminGroup = $Translated.Split('\')[-1]
+    }
+    
+    $Acl = Get-Acl $WorkDir
+    $Ar = New-Object System.Security.AccessControl.FileSystemAccessRule($AdminGroup, "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
+    $Acl.AddAccessRule($Ar)
+    Set-Acl $WorkDir $Acl
+}
+catch {
+    Write-Host "Warning: Failed to set ACL on $($WorkDir): $($_.Exception.Message)"
+}
+
+>>>>>>> Stashed changes
 $LogPath = Join-Path -Path $WorkDir -ChildPath "winget-log.txt"
 $TempScriptPath = Join-Path -Path $WorkDir -ChildPath "TempWingetUpdate_$(Get-Random).ps1"
 
@@ -26,10 +48,151 @@ if (Test-Path $LogPath) { Remove-Item $LogPath -Force }
 
 $UpdateScriptContent = @"
 Start-Transcript -Path '$LogPath' -Append
+<<<<<<< Updated upstream
 function Test-IsAdmin {
     `$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
     `$principal = New-Object Security.Principal.WindowsPrincipal(`$currentUser)
     return `$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+=======
+try {
+    function Test-IsAdmin {
+        `$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
+        `$principal = New-Object Security.Principal.WindowsPrincipal(`$currentUser)
+        return `$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+
+    try {
+        # 1. Direct Source Injection & AppInstaller Registration
+        Add-AppxPackage -Path "https://cdn.winget.microsoft.com/cache/source.msix" -ErrorAction SilentlyContinue
+        Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
+        
+        # 2. Module & Repair
+        if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
+            Install-PackageProvider -Name 'NuGet' -Force -ErrorAction SilentlyContinue
+            Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:`$false -Scope CurrentUser -ErrorAction SilentlyContinue
+        }
+        
+        Import-Module Microsoft.WinGet.Client -ErrorAction SilentlyContinue
+        if (Get-Command Repair-WinGetPackageManager -ErrorAction SilentlyContinue) {
+            Repair-WinGetPackageManager -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Output "Init Warning: `$(`$_.Exception.Message)"
+    }
+
+    # 3. Robust WinGet command discovery
+    `$WingetCmd = "winget"
+    if (-not (Get-Command "winget" -ErrorAction SilentlyContinue)) {
+        `$PotentialPaths = @(
+            "`$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe",
+            "`$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe",
+            "`$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\winget.exe"
+        )
+        foreach (`$Path in `$PotentialPaths) {
+            `$ResolvedPath = Resolve-Path `$Path -ErrorAction SilentlyContinue
+            if (`$ResolvedPath) {
+                `$WingetCmd = `$ResolvedPath.Path
+                break
+            }
+        }
+    }
+
+    `$WingetAppData = Join-Path `$env:LOCALAPPDATA "Microsoft\WinGet"
+    `$WingetLocalState = Join-Path `$env:LOCALAPPDATA "Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState"
+
+    if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path `$WingetLocalState) { Remove-Item -Path `$WingetLocalState -Recurse -Force -ErrorAction SilentlyContinue }
+
+    & `$WingetCmd source remove --name winget 2>&1 | Out-Null
+    & `$WingetCmd source remove --name msstore 2>&1 | Out-Null
+
+    Add-AppxPackage -Path "https://cdn.winget.microsoft.com/cache/source.msix" -ErrorAction SilentlyContinue
+
+    & `$WingetCmd source reset --force
+    & `$WingetCmd source update
+
+    Start-Sleep -Seconds 10
+    & `$WingetCmd source list
+    & `$WingetCmd search "NuGet" --accept-source-agreements | Out-Null
+
+    # --- IGNORING LOGIC AND UPGRADE EXECUTION ---
+    `$IgnoreFile = "C:\Windows\LTSvc\eworx\winget\ignoredprograms.txt"
+    `$IgnoreList = @()
+    if (Test-Path `$IgnoreFile) {
+        `$IgnoreList = Get-Content `$IgnoreFile | Where-Object { `$_.Trim() -ne "" } | ForEach-Object { `$_.Trim().ToLower() }
+        Write-Output "Loaded `$(`$IgnoreList.Count) ignore entries from `$IgnoreFile"
+    }
+
+    if (`$IgnoreList.Count -eq 0) {
+        Write-Output "No ignore list found or list is empty. Running upgrade --all..."
+        & `$WingetCmd upgrade --all --accept-package-agreements --accept-source-agreements --silent --include-unknown
+    } else {
+        Write-Output "Checking for available upgrades to apply exclusions..."
+        # Appended accept-agreements to prevent interactive prompt hanging
+        `$Upgrades = & `$WingetCmd upgrade --accept-source-agreements
+        
+        # LANGUAGE-AGNOSTIC PARSING: Find the dashed line to identify headers and columns
+        `$DashLine = `$Upgrades | Where-Object { `$_ -match "^-{10,}" } | Select-Object -First 1
+        `$DashIndex = [array]::IndexOf(`$Upgrades, `$DashLine)
+
+        if (`$DashIndex -gt 0 -and `$DashIndex -lt (`$Upgrades.Count - 1)) {
+            `$HeaderLine = `$Upgrades[`$DashIndex - 1]
+            `$HeaderParts = `$HeaderLine -split '\s{2,}'
+            
+            if (`$HeaderParts.Count -ge 3) {
+                # Dynamically assign the ID and Version string based on whatever language the OS is using
+                `$IdHeader = `$HeaderParts[1]
+                `$VersionHeader = `$HeaderParts[2]
+                
+                `$IdStart = `$HeaderLine.IndexOf(`$IdHeader)
+                `$VersionStart = `$HeaderLine.IndexOf(`$VersionHeader)
+                `$IdLength = `$VersionStart - `$IdStart
+
+                for (`$i = `$DashIndex + 1; `$i -lt `$Upgrades.Count; `$i++) {
+                    `$Line = `$Upgrades[`$i]
+                    if ([string]::IsNullOrWhiteSpace(`$Line)) { continue }
+                    
+                    # Skip trailing summary lines (e.g. "X upgrades available" in any language)
+                    if (`$Line.Length -lt `$IdStart) { continue }
+                    
+                    `$AppName = `$Line.Substring(0, `$IdStart).Trim()
+                    `$AppId = ""
+                    if (`$Line.Length -ge `$VersionStart) {
+                        `$AppId = `$Line.Substring(`$IdStart, `$IdLength).Trim()
+                    } else {
+                        `$AppId = `$Line.Substring(`$IdStart).Trim()
+                    }
+                    
+                    `$Skip = `$false
+                    foreach (`$IgnoreItem in `$IgnoreList) {
+                        if (`$AppName.ToLower().Contains(`$IgnoreItem) -or `$AppId.ToLower().Contains(`$IgnoreItem)) {
+                            `$Skip = `$true
+                            break
+                        }
+                    }
+                    
+                    if (`$Skip) {
+                        Write-Output "Skipping ignored application: `$AppName (`$AppId)"
+                    } elseif (`$AppId) {
+                        Write-Output "Upgrading: `$AppName (`$AppId)..."
+                        & `$WingetCmd upgrade --id "`$AppId" --accept-package-agreements --accept-source-agreements --silent --include-unknown
+                    }
+                }
+            } else {
+                Write-Output "Could not reliably parse column headers."
+            }
+        } else {
+            Write-Output "No valid upgrade data rows found or no upgrades available."
+        }
+    }
+
+} catch {
+    Write-Error "Inner Script Failure: `$(`$_.Exception.Message)"
+    exit 1
+} finally {
+    Stop-Transcript
+>>>>>>> Stashed changes
 }
 
 # Deep Initialization for WinGet in new user profile
@@ -117,48 +280,37 @@ try {
     $WingetLog = "No log found"
     if (Test-Path $LogPath) {
         $RawLog = Get-Content $LogPath
-        $CleanLog = $RawLog | Where-Object { 
-            $_ -notmatch "^\*\*\*\*" -and 
-            $_ -notmatch "^Windows PowerShell transcript" -and
-            $_ -notmatch "^Start time:" -and
-            $_ -notmatch "^Username:" -and
-            $_ -notmatch "^RunAs User:" -and
-            $_ -notmatch "^Configuration Name:" -and
-            $_ -notmatch "^Machine:" -and
-            $_ -notmatch "^Host Application:" -and
-            $_ -notmatch "^Process ID:" -and
-            $_ -notmatch "^PSVersion:" -and
-            $_ -notmatch "^PSEdition:" -and
-            $_ -notmatch "^PSCompatibleVersions:" -and
-            $_ -notmatch "^BuildVersion:" -and
-            $_ -notmatch "^CLRVersion:" -and
-            $_ -notmatch "^WSManStackVersion:" -and
-            $_ -notmatch "^PSRemotingProtocolVersion:" -and
-            $_ -notmatch "^SerializationVersion:" -and
-            $_ -notmatch "^Transcript started" -and
-            $_ -notmatch "^End time:" -and
-            $_ -notmatch "o{10,}" -and # Match long progress bars (10+ o's)
-            $_ -notmatch "^Deployment operation progress" -and
-            $_ -notmatch "^Updating source:" -and
-            $_ -notmatch "^Resetting all sources" -and
-            $_ -notmatch "^The 'msstore' source requires" -and
-            $_ -notmatch "^Terms of Transaction" -and
-            $_ -notmatch "^The source requires the current machine" -and
-            $_ -notmatch "^usage: winget" -and
-            $_ -notmatch "^The following arguments are available:" -and
-            $_ -notmatch "^The following options are available:" -and
-            $_ -notmatch "^The following command aliases are available" -and
-            $_ -notmatch "^Prompts the user to press any key" -and
-            $_ -notmatch "^--logs,--open-logs" -and
-            $_ -notmatch "^--verbose,--verbose-logs" -and
-            $_ -notmatch "^--nowarn,--ignore-warnings" -and
-            $_ -notmatch "^--disable-interactivity" -and
-            $_ -notmatch "^--proxy" -and
-            $_ -notmatch "^--no-proxy" -and
-            $_.Trim() -ne ""
+        $CleanLog = @()
+        $InTranscriptBlock = $false
+        
+        # LANGUAGE-AGNOSTIC LOG CLEANUP: Drops everything between the "******" boundary boxes
+        foreach ($line in $RawLog) {
+            if ($line -match "^\*\*\*\*") {
+                $InTranscriptBlock = -not $InTranscriptBlock
+                continue
+            }
+            if (-not $InTranscriptBlock) {
+                # DROP BUG FIX: Removed the faulty -notmatch "" condition
+                if ($line.Trim() -ne "" -and $line -notmatch "o{10,}" -and $line -notmatch "\[=*\]") {
+                    $CleanLog += $line.Trim()
+                }
+            }
         }
-        $WingetLog = $CleanLog -join " ; "
+        
+        if ($CleanLog.Count -eq 0) {
+            $WingetLog = "Log was empty or fully filtered."
+        } else {
+            $WingetLog = $CleanLog -join " ; "
+        }
+        
+        # --- CRITICAL FIX FOR AUTOMATE STRING INJECTION ---
         $WingetLog = $WingetLog -replace "\|", "/" 
+        $WingetLog = $WingetLog -replace "\x27", ""   # Strip single quotes (Hex 27)
+        $WingetLog = $WingetLog -replace "\x22", ""   # Strip double quotes (Hex 22)
+        $WingetLog = $WingetLog -replace "\x0D", ""   # Remove carriage returns (Hex 0D)
+        $WingetLog = $WingetLog -replace "\x0A", " "  # Replace line breaks with spaces (Hex 0A)
+        $WingetLog = $WingetLog -replace "\s{2,}", " " # Condense multiple spaces into one
+        
         if ($WingetLog.Length -gt 2000) { $WingetLog = $WingetLog.Substring(0, 2000) + "..." }
     }
 
