@@ -19,8 +19,6 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 $TaskName = "TempWingetTask_$(Get-Random)"
 $WorkDir = "C:\eworx"
 if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
-<<<<<<< Updated upstream
-=======
 
 # Explicitly grant Edit permission to localized Administrators group (S-1-5-32-544)
 try {
@@ -40,7 +38,6 @@ catch {
     Write-Host "Warning: Failed to set ACL on $($WorkDir): $($_.Exception.Message)"
 }
 
->>>>>>> Stashed changes
 $LogPath = Join-Path -Path $WorkDir -ChildPath "winget-log.txt"
 $TempScriptPath = Join-Path -Path $WorkDir -ChildPath "TempWingetUpdate_$(Get-Random).ps1"
 
@@ -48,12 +45,6 @@ if (Test-Path $LogPath) { Remove-Item $LogPath -Force }
 
 $UpdateScriptContent = @"
 Start-Transcript -Path '$LogPath' -Append
-<<<<<<< Updated upstream
-function Test-IsAdmin {
-    `$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
-    `$principal = New-Object Security.Principal.WindowsPrincipal(`$currentUser)
-    return `$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-=======
 try {
     function Test-IsAdmin {
         `$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -129,7 +120,6 @@ try {
         & `$WingetCmd upgrade --all --accept-package-agreements --accept-source-agreements --silent --include-unknown
     } else {
         Write-Output "Checking for available upgrades to apply exclusions..."
-        # Appended accept-agreements to prevent interactive prompt hanging
         `$Upgrades = & `$WingetCmd upgrade --accept-source-agreements
         
         # LANGUAGE-AGNOSTIC PARSING: Find the dashed line to identify headers and columns
@@ -141,7 +131,6 @@ try {
             `$HeaderParts = `$HeaderLine -split '\s{2,}'
             
             if (`$HeaderParts.Count -ge 3) {
-                # Dynamically assign the ID and Version string based on whatever language the OS is using
                 `$IdHeader = `$HeaderParts[1]
                 `$VersionHeader = `$HeaderParts[2]
                 
@@ -152,8 +141,6 @@ try {
                 for (`$i = `$DashIndex + 1; `$i -lt `$Upgrades.Count; `$i++) {
                     `$Line = `$Upgrades[`$i]
                     if ([string]::IsNullOrWhiteSpace(`$Line)) { continue }
-                    
-                    # Skip trailing summary lines (e.g. "X upgrades available" in any language)
                     if (`$Line.Length -lt `$IdStart) { continue }
                     
                     `$AppName = `$Line.Substring(0, `$IdStart).Trim()
@@ -192,63 +179,7 @@ try {
     exit 1
 } finally {
     Stop-Transcript
->>>>>>> Stashed changes
 }
-
-# Deep Initialization for WinGet in new user profile
-try {
-    # Ensure module is available
-    if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
-        Install-PackageProvider -Name 'NuGet' -Force -ErrorAction SilentlyContinue
-        Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-        Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:`$false -Scope AllUsers -ErrorAction SilentlyContinue
-    }
-    
-    # Repair/Register WinGet for the current user session
-    Import-Module Microsoft.WinGet.Client -ErrorAction SilentlyContinue
-    if (Get-Command Repair-WinGetPackageManager -ErrorAction SilentlyContinue) {
-        # Removing -Scope as it's not supported in all module versions
-        Repair-WinGetPackageManager -ErrorAction SilentlyContinue
-    }
-    
-    # Register the AppInstaller itself for this user
-    Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
-} catch {
-    Write-Output "Init Warning: `$(`$_.Exception.Message)"
-}
-
-# Aggressive fix for error 0x8a15000f (Source data missing)
-`$WingetAppData = Join-Path `$env:LOCALAPPDATA "Microsoft\WinGet"
-`$WingetLocalState = Join-Path `$env:LOCALAPPDATA "Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState"
-
-if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -Force -ErrorAction SilentlyContinue }
-if (Test-Path `$WingetLocalState) { Remove-Item -Path `$WingetLocalState -Recurse -Force -ErrorAction SilentlyContinue }
-
-# Nuclear option: Remove sources first to ensure clean slate
-& winget source remove --name winget 2>&1 | Out-Null
-& winget source remove --name msstore 2>&1 | Out-Null
-
-# Direct Source Injection (User Suggestion)
-# This bypasses potential download/caching issues by installing the source package directly
-Add-AppxPackage -Path "https://cdn.winget.microsoft.com/cache/source.msix" -ErrorAction SilentlyContinue
-
-# Reset and Update
-& winget source reset --force
-& winget source update
-
-# Stabilization delay to ensure source index is flushed to disk
-Start-Sleep -Seconds 10
-
-# Debug: List sources to log
-& winget source list
-
-# Trigger index creation
-& winget search "NuGet" --accept-source-agreements | Out-Null
-
-# Run updates (including --include-unknown for Store apps as requested)
-& winget upgrade --all --accept-package-agreements --accept-source-agreements --silent --include-unknown
-
-Stop-Transcript
 "@
 
 $UpdateScriptContent | Out-File -FilePath $TempScriptPath -Encoding UTF8
@@ -283,14 +214,13 @@ try {
         $CleanLog = @()
         $InTranscriptBlock = $false
         
-        # LANGUAGE-AGNOSTIC LOG CLEANUP: Drops everything between the "******" boundary boxes
+        # LANGUAGE-AGNOSTIC LOG CLEANUP: Drops everything between the transcript boundary boxes
         foreach ($line in $RawLog) {
             if ($line -match "^\*\*\*\*") {
                 $InTranscriptBlock = -not $InTranscriptBlock
                 continue
             }
             if (-not $InTranscriptBlock) {
-                # DROP BUG FIX: Removed the faulty -notmatch "" condition
                 if ($line.Trim() -ne "" -and $line -notmatch "o{10,}" -and $line -notmatch "\[=*\]") {
                     $CleanLog += $line.Trim()
                 }

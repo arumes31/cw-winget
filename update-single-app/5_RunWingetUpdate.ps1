@@ -22,6 +22,25 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 $TaskName = "TempWingetTask_$(Get-Random)"
 $WorkDir = "C:\eworx"
 if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
+
+# Explicitly grant Edit permission to localized Administrators group (S-1-5-32-544)
+try {
+    $AdminGroup = (Get-LocalGroup -SID "S-1-5-32-544" -ErrorAction SilentlyContinue).Name
+    if (-not $AdminGroup) {
+        $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+        $Translated = $AdminSid.Translate([System.Security.Principal.NTAccount]).Value
+        $AdminGroup = $Translated.Split('\')[-1]
+    }
+    
+    $Acl = Get-Acl $WorkDir
+    $Ar = New-Object System.Security.AccessControl.FileSystemAccessRule($AdminGroup, "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
+    $Acl.AddAccessRule($Ar)
+    Set-Acl $WorkDir $Acl
+}
+catch {
+    Write-Host "Warning: Failed to set ACL on $($WorkDir): $($_.Exception.Message)"
+}
+
 $LogPath = Join-Path -Path $WorkDir -ChildPath "winget-log.txt"
 $TempScriptPath = Join-Path -Path $WorkDir -ChildPath "TempWingetUpdate_$(Get-Random).ps1"
 
@@ -29,88 +48,104 @@ if (Test-Path $LogPath) { Remove-Item $LogPath -Force }
 
 $UpdateScriptContent = @"
 Start-Transcript -Path '$LogPath' -Append
-function Test-IsAdmin {
-    `$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
-    `$principal = New-Object Security.Principal.WindowsPrincipal(`$currentUser)
-    return `$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-# Deep Initialization for WinGet in new user profile
 try {
-    # Ensure module is available
-    if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
-        Install-PackageProvider -Name 'NuGet' -Force -ErrorAction SilentlyContinue
-        Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-        Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:`$false -Scope AllUsers -ErrorAction SilentlyContinue
+    function Test-IsAdmin {
+        `$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
+        `$principal = New-Object Security.Principal.WindowsPrincipal(`$currentUser)
+        return `$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     }
-    
-    # Repair/Register WinGet for the current user session
-    Import-Module Microsoft.WinGet.Client -ErrorAction SilentlyContinue
-    if (Get-Command Repair-WinGetPackageManager -ErrorAction SilentlyContinue) {
-        # Removing -Scope as it's not supported in all module versions
-        Repair-WinGetPackageManager -ErrorAction SilentlyContinue
+
+    try {
+        # 1. Direct Source Injection & AppInstaller Registration
+        Add-AppxPackage -Path "https://cdn.winget.microsoft.com/cache/source.msix" -ErrorAction SilentlyContinue
+        Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
+        
+        # 2. Module & Repair
+        if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
+            Install-PackageProvider -Name 'NuGet' -Force -ErrorAction SilentlyContinue
+            Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:`$false -Scope CurrentUser -ErrorAction SilentlyContinue
+        }
+        
+        Import-Module Microsoft.WinGet.Client -ErrorAction SilentlyContinue
+        if (Get-Command Repair-WinGetPackageManager -ErrorAction SilentlyContinue) {
+            Repair-WinGetPackageManager -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Output "Init Warning: `$(`$_.Exception.Message)"
     }
-    
-    # Register the AppInstaller itself for this user
-    Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
-} catch {
-    Write-Output "Init Warning: `$(`$_.Exception.Message)"
-}
 
-# Aggressive fix for error 0x8a15000f (Source data missing)
-`$WingetAppData = Join-Path `$env:LOCALAPPDATA "Microsoft\WinGet"
-`$WingetLocalState = Join-Path `$env:LOCALAPPDATA "Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState"
+    # 3. Robust WinGet command discovery
+    `$WingetCmd = "winget"
+    if (-not (Get-Command "winget" -ErrorAction SilentlyContinue)) {
+        `$PotentialPaths = @(
+            "`$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe",
+            "`$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe",
+            "`$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\winget.exe"
+        )
+        foreach (`$Path in `$PotentialPaths) {
+            `$ResolvedPath = Resolve-Path `$Path -ErrorAction SilentlyContinue
+            if (`$ResolvedPath) {
+                `$WingetCmd = `$ResolvedPath.Path
+                break
+            }
+        }
+    }
 
-if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -Force -ErrorAction SilentlyContinue }
-if (Test-Path `$WingetLocalState) { Remove-Item -Path `$WingetLocalState -Recurse -Force -ErrorAction SilentlyContinue }
+    `$WingetAppData = Join-Path `$env:LOCALAPPDATA "Microsoft\WinGet"
+    `$WingetLocalState = Join-Path `$env:LOCALAPPDATA "Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState"
 
-# Nuclear option: Remove sources first to ensure clean slate
-& winget source remove --name winget 2>&1 | Out-Null
-& winget source remove --name msstore 2>&1 | Out-Null
+    if (Test-Path `$WingetAppData) { Remove-Item -Path `$WingetAppData -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path `$WingetLocalState) { Remove-Item -Path `$WingetLocalState -Recurse -Force -ErrorAction SilentlyContinue }
 
-# Direct Source Injection (User Suggestion)
-# This bypasses potential download/caching issues by installing the source package directly
-Add-AppxPackage -Path "https://cdn.winget.microsoft.com/cache/source.msix" -ErrorAction SilentlyContinue
+    & `$WingetCmd source remove --name winget 2>&1 | Out-Null
+    & `$WingetCmd source remove --name msstore 2>&1 | Out-Null
 
-# Reset and Update
-& winget source reset --force
-& winget source update
+    Add-AppxPackage -Path "https://cdn.winget.microsoft.com/cache/source.msix" -ErrorAction SilentlyContinue
 
-# Stabilization delay to ensure source index is flushed to disk
-Start-Sleep -Seconds 10
+    & `$WingetCmd source reset --force
+    & `$WingetCmd source update
 
+    Start-Sleep -Seconds 10
+    & `$WingetCmd source list
+    & `$WingetCmd search "NuGet" --accept-source-agreements | Out-Null
 
-# Pass variables from outer scope to inner scope
-`$installapp = '$installapp'
-Write-Output "DEBUG: Inner installapp value: '`$installapp'"
+    # Pass variables from outer scope to inner scope
+    `$installapp = '$installapp'
+    Write-Output "DEBUG: Inner installapp value: '`$installapp'"
 
-# Sanitize
-if (`$installapp) { `$installapp = `$installapp.Trim() }
+    # Sanitize
+    if (`$installapp) { `$installapp = `$installapp.Trim() }
 
-`$checkNull = [string]::IsNullOrWhiteSpace(`$installapp)
-# Construct sentinel at runtime to avoid replacement by CWA/Simulator
-`$sentinel = "@" + "installapp" + "@"
-`$checkPlaceholder = (`$installapp -eq `$sentinel)
-Write-Output "DEBUG: CheckNull=`$checkNull, CheckPlaceholder=`$checkPlaceholder"
+    `$checkNull = [string]::IsNullOrWhiteSpace(`$installapp)
+    # Construct sentinel at runtime to avoid replacement by CWA/Simulator
+    `$sentinel = "@" + "installapp" + "@"
+    `$checkPlaceholder = (`$installapp -eq `$sentinel)
+    Write-Output "DEBUG: CheckNull=`$checkNull, CheckPlaceholder=`$checkPlaceholder"
 
-# Check and Install/Update Specific App
-if (-not `$checkNull -and -not `$checkPlaceholder) {
-    Write-Output "Checking for application: `$installapp"
-    # Try to find the package first
-    `$searchResult = & winget search --id `$installapp --accept-source-agreements
-    
-    if (`$LASTEXITCODE -eq 0) {
-        Write-Output "Installing/Updating application: `$installapp"
-        # We use install because it handles both fresh install and upgrade for most packages
-        & winget install --id `$installapp --exact --accept-package-agreements --accept-source-agreements --scope machine --force --silent
+    # Check and Install/Update Specific App
+    if (-not `$checkNull -and -not `$checkPlaceholder) {
+        Write-Output "Checking for application: `$installapp"
+        # Try to find the package first
+        `$searchResult = & `$WingetCmd search --id `$installapp --accept-source-agreements
+        
+        if (`$LASTEXITCODE -eq 0) {
+            Write-Output "Installing/Updating application: `$installapp"
+            # We use install because it handles both fresh install and upgrade for most packages
+            & `$WingetCmd install --id `$installapp --exact --accept-package-agreements --accept-source-agreements --scope machine --force --silent
+        } else {
+            Write-Warning "Application '`$installapp' not found in sources."
+        }
     } else {
-        Write-Warning "Application '`$installapp' not found in sources."
+        Write-Warning "No application specified in installapp variable."
     }
-} else {
-    Write-Warning "No application specified in installapp variable."
-}
 
-Stop-Transcript
+} catch {
+    Write-Error "Inner Script Failure: `$(`$_.Exception.Message)"
+    exit 1
+} finally {
+    Stop-Transcript
+}
 "@
 
 $UpdateScriptContent | Out-File -FilePath $TempScriptPath -Encoding UTF8
@@ -142,48 +177,36 @@ try {
     $WingetLog = "No log found"
     if (Test-Path $LogPath) {
         $RawLog = Get-Content $LogPath
-        $CleanLog = $RawLog | Where-Object { 
-            $_ -notmatch "^\*\*\*\*" -and 
-            $_ -notmatch "^Windows PowerShell transcript" -and
-            $_ -notmatch "^Start time:" -and
-            $_ -notmatch "^Username:" -and
-            $_ -notmatch "^RunAs User:" -and
-            $_ -notmatch "^Configuration Name:" -and
-            $_ -notmatch "^Machine:" -and
-            $_ -notmatch "^Host Application:" -and
-            $_ -notmatch "^Process ID:" -and
-            $_ -notmatch "^PSVersion:" -and
-            $_ -notmatch "^PSEdition:" -and
-            $_ -notmatch "^PSCompatibleVersions:" -and
-            $_ -notmatch "^BuildVersion:" -and
-            $_ -notmatch "^CLRVersion:" -and
-            $_ -notmatch "^WSManStackVersion:" -and
-            $_ -notmatch "^PSRemotingProtocolVersion:" -and
-            $_ -notmatch "^SerializationVersion:" -and
-            $_ -notmatch "^Transcript started" -and
-            $_ -notmatch "^End time:" -and
-            $_ -notmatch "o{10,}" -and # Match long progress bars (10+ o's)
-            $_ -notmatch "^Deployment operation progress" -and
-            $_ -notmatch "^Updating source:" -and
-            $_ -notmatch "^Resetting all sources" -and
-            $_ -notmatch "^The 'msstore' source requires" -and
-            $_ -notmatch "^Terms of Transaction" -and
-            $_ -notmatch "^The source requires the current machine" -and
-            $_ -notmatch "^usage: winget" -and
-            $_ -notmatch "^The following arguments are available:" -and
-            $_ -notmatch "^The following options are available:" -and
-            $_ -notmatch "^The following command aliases are available" -and
-            $_ -notmatch "^Prompts the user to press any key" -and
-            $_ -notmatch "^--logs,--open-logs" -and
-            $_ -notmatch "^--verbose,--verbose-logs" -and
-            $_ -notmatch "^--nowarn,--ignore-warnings" -and
-            $_ -notmatch "^--disable-interactivity" -and
-            $_ -notmatch "^--proxy" -and
-            $_ -notmatch "^--no-proxy" -and
-            $_.Trim() -ne ""
+        $CleanLog = @()
+        $InTranscriptBlock = $false
+        
+        # LANGUAGE-AGNOSTIC LOG CLEANUP: Drops everything between the "****" boundary boxes
+        foreach ($line in $RawLog) {
+            if ($line -match "^\*\*\*\*") {
+                $InTranscriptBlock = -not $InTranscriptBlock
+                continue
+            }
+            if (-not $InTranscriptBlock) {
+                if ($line.Trim() -ne "" -and $line -notmatch "o{10,}" -and $line -notmatch "\[=*\]") {
+                    $CleanLog += $line.Trim()
+                }
+            }
         }
-        $WingetLog = $CleanLog -join " ; "
+        
+        if ($CleanLog.Count -eq 0) {
+            $WingetLog = "Log was empty or fully filtered."
+        } else {
+            $WingetLog = $CleanLog -join " ; "
+        }
+        
+        # --- CRITICAL FIX FOR AUTOMATE STRING INJECTION ---
         $WingetLog = $WingetLog -replace "\|", "/" 
+        $WingetLog = $WingetLog -replace "\x27", ""   # Strip single quotes (Hex 27)
+        $WingetLog = $WingetLog -replace "\x22", ""   # Strip double quotes (Hex 22)
+        $WingetLog = $WingetLog -replace "\x0D", ""   # Remove carriage returns (Hex 0D)
+        $WingetLog = $WingetLog -replace "\x0A", " "  # Replace line breaks with spaces (Hex 0A)
+        $WingetLog = $WingetLog -replace "\s{2,}", " " # Condense multiple spaces into one
+        
         if ($WingetLog.Length -gt 2000) { $WingetLog = $WingetLog.Substring(0, 2000) + "..." }
     }
 
