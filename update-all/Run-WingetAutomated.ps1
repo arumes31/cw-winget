@@ -53,6 +53,11 @@ Write-Host "Step 5: Run Winget Update (Wait for background task)..."
 $WingetState = Invoke-ScriptWithState "5_RunWingetUpdate.ps1" $WingetState
 Write-Host "Captured State (Summary): $($WingetState.Substring(0, [Math]::Min(100, $WingetState.Length)))..."
 
+# Step 5-2: Run Winget User Update (Runs as Logged-on User)
+Write-Host "Step 5-2: Run Winget User Update (Interactive context)..."
+$WingetState = Invoke-ScriptWithState "5-2_RunWingetUserUpdate.ps1" $WingetState
+Write-Host "Captured State (Summary): $($WingetState.Substring(0, [Math]::Min(100, $WingetState.Length)))..."
+
 # Step 6: Disable Account
 Write-Host "Step 6: Disable Account..."
 $FinalState = Invoke-ScriptWithState "6_DisableTempAdmin.ps1" $WingetState
