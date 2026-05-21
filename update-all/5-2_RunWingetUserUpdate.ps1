@@ -73,6 +73,37 @@ if (`$win -ne 0) { [Win32.Window]::ShowWindow(`$win, 0) }
 
 Start-Transcript -Path '$UserLogPath' -Append
 try {
+    function Invoke-WingetSilent {
+        param(
+            [string]`$Arguments,
+            [bool]`$CaptureOutput = `$false
+        )
+        
+        try {
+            `$Psi = New-Object System.Diagnostics.ProcessStartInfo
+            `$Psi.FileName = `$WingetCmd
+            `$Psi.Arguments = `$Arguments
+            `$Psi.UseShellExecute = `$false
+            `$Psi.CreateNoWindow = `$true
+            `$Psi.RedirectStandardOutput = `$true
+            `$Psi.RedirectStandardError = `$true
+            
+            `$Process = [System.Diagnostics.Process]::Start(`$Psi)
+            `$Output = `$Process.StandardOutput.ReadToEnd()
+            `$ErrorOut = `$Process.StandardError.ReadToEnd()
+            `$Process.WaitForExit()
+            
+            if (`$CaptureOutput) {
+                return `$Output -split "\r?\n"
+            } else {
+                if (`$Output) { Write-Output `$Output }
+                if (`$ErrorOut) { Write-Error `$ErrorOut }
+            }
+        } catch {
+            Write-Error "Failed running winget `$Arguments: `$(`$_.Exception.Message)"
+        }
+    }
+
     `$WingetCmd = "winget"
     if (-not (Get-Command "winget" -ErrorAction SilentlyContinue)) {
         `$PotentialPaths = @(
@@ -101,10 +132,10 @@ try {
 
     if (`$IgnoreList.Count -eq 0) {
         Write-Output "No ignore list found or list is empty. Running upgrade --all --scope user..."
-        & `$WingetCmd upgrade --all --scope user --accept-package-agreements --accept-source-agreements --silent --include-unknown
+        Invoke-WingetSilent "upgrade --all --scope user --accept-package-agreements --accept-source-agreements --silent --include-unknown"
     } else {
         Write-Output "Checking for available user upgrades to apply exclusions..."
-        `$Upgrades = & `$WingetCmd upgrade --scope user --accept-source-agreements
+        `$Upgrades = Invoke-WingetSilent "upgrade --scope user --accept-source-agreements" -CaptureOutput `$true
         
         # LANGUAGE-AGNOSTIC PARSING: Find the dashed line to identify headers and columns
         `$DashLine = `$Upgrades | Where-Object { `$_ -match "^-{10,}" } | Select-Object -First 1
@@ -150,7 +181,7 @@ try {
                         Write-Output "Skipping ignored user application: `$AppName (`$AppId)"
                     } elseif (`$AppId) {
                         Write-Output "Upgrading User App: `$AppName (`$AppId)..."
-                        & `$WingetCmd upgrade --id "`$AppId" --scope user --accept-package-agreements --accept-source-agreements --silent --include-unknown
+                        Invoke-WingetSilent "upgrade --id `'$AppId`' --scope user --accept-package-agreements --accept-source-agreements --silent --include-unknown"
                     }
                 }
             } else {
