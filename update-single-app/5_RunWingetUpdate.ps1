@@ -275,7 +275,8 @@ try {
         # Replace newlines and carriage returns with spaces first
         $WingetLog = $WingetLog -replace "[\r\n]+", " "
         # Keep only safe, printable alphanumeric and Unicode letter characters (no single/double quotes, backticks, semicolons, or pipes)
-        $WingetLog = $WingetLog -replace "[^a-zA-Z0-9\p{L}\p{N}\.\,\-\_\:\/\(\)\[\]\+\s]", ""
+        # Using a clean, escape-free bracket layout to prevent preprocessor backslash-mangling issues
+        $WingetLog = $WingetLog -replace "[^][a-zA-Z0-9\p{L}\p{N}\s.,:_/()+-]", ""
         # Condense multiple spaces into one
         $WingetLog = $WingetLog -replace "\s{2,}", " "
         
