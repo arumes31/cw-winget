@@ -240,7 +240,7 @@ try {
                         Write-Output "Skipping ignored application: `$AppName (`$AppId)"
                     } elseif (`$AppId) {
                         Write-Output "Upgrading: `$AppName (`$AppId)..."
-                        Invoke-WingetCommand "upgrade --id `"`$AppId`" --accept-package-agreements --accept-source-agreements --silent --disable-interactivity --scope machine --include-unknown"
+                        Invoke-WingetCommand "upgrade --id `$AppId --accept-package-agreements --accept-source-agreements --silent --disable-interactivity --scope machine --include-unknown"
                     }
                 }
             } else {

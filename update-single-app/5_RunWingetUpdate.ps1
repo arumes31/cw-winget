@@ -200,7 +200,7 @@ try {
         
         if (`$LASTEXITCODE -eq 0) {
             Write-Output "Installing/Updating application: `$installapp"
-            Invoke-WingetCommand "install --id `"`$installapp`" --exact --accept-package-agreements --accept-source-agreements --scope machine --force --silent --disable-interactivity"
+            Invoke-WingetCommand "install --id `$installapp --exact --accept-package-agreements --accept-source-agreements --scope machine --force --silent --disable-interactivity"
         } else {
             Write-Warning "Application '`$installapp' not found in sources."
         }
