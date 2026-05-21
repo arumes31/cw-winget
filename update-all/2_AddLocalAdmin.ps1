@@ -82,7 +82,7 @@ try {
                 $GroupInfo = net localgroup "$AdminGroup" 2>&1
                 $MemberLine = $null
                 if ($LASTEXITCODE -eq 0) {
-                    $MemberLine = $GroupInfo | Where-Object { $_ -match "(^|\s)$Username(\s|$)" }
+                    $MemberLine = $GroupInfo | Where-Object { $_ -match "(^|[\s\\])$Username(\s|$)" }
                 }
                 
                 if ($MemberLine) {
@@ -105,7 +105,7 @@ catch {
     # Let's check membership one last time using the safest fallback net.exe
     try {
         $GroupInfo = net localgroup "$AdminGroup" 2>&1
-        $MemberLine = $GroupInfo | Where-Object { $_ -match "(^|\s)$Username(\s|$)" }
+        $MemberLine = $GroupInfo | Where-Object { $_ -match "(^|[\s\\])$Username(\s|$)" }
         if ($MemberLine) {
             Write-Output "2|${Username}|${Password}|AlreadyAdmin"
             return
