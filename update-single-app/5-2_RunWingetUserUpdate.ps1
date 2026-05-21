@@ -62,6 +62,15 @@ $TaskName = "UserWingetUpdate_$(Get-Random)"
 $WorkDir = "C:\eworx"
 if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
 
+try {
+    $Acl = Get-Acl $WorkDir
+    $Ar = New-Object System.Security.AccessControl.FileSystemAccessRule($LoggedOnUser, "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
+    $Acl.SetAccessRule($Ar)
+    Set-Acl $WorkDir $Acl
+} catch {
+    Write-Warning "Failed to set ACL on $WorkDir for $LoggedOnUser - $($_.Exception.Message)"
+}
+
 $UserLogPath = Join-Path -Path $WorkDir -ChildPath "user-winget-log.txt"
 $UserScriptPath = Join-Path -Path $WorkDir -ChildPath "UserWingetUpdate_$(Get-Random).ps1"
 
