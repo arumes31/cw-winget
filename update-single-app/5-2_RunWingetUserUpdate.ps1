@@ -2,7 +2,9 @@
 # Purpose: Update User-scope apps for the logged-on user without UAC prompts.
 # Input/Output: Step|Username|Password|Result|UserWingetLog
 
-$State = '@state@'
+$State = @'
+@state@
+'@.Trim()
 $installapp = '@installapp@'
 
 $Parts = $State.Split('|')
@@ -51,6 +53,10 @@ if (Test-Path $UserLogPath) { Remove-Item $UserLogPath -Force }
 
 # 2. Create the script to be run contextually as the user
 $UserScriptContent = @"
+Add-Type -Name Window -Namespace Win32 -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
+`$win = (Get-Process -Id `$PID).MainWindowHandle
+if (`$win -ne 0) { [Win32.Window]::ShowWindow(`$win, 0) }
+
 Start-Transcript -Path '$UserLogPath' -Append
 try {
     `$WingetCmd = "winget"
@@ -157,7 +163,7 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
 
     try {
         # 3. Register task to run AS the logged-on user (Interactive)
-        $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$UserScriptPath`""
+        $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$UserScriptPath`""
         $Principal = New-ScheduledTaskPrincipal -UserId $LoggedOnUser -LogonType Interactive
         $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
         
@@ -184,7 +190,13 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
                 if ($line -match "^\*\*\*\*") { $InBlock = -not $InBlock; continue }
                 if (-not $InBlock -and $line.Trim()) { $CleanLog += $line.Trim() }
             }
-            $CleanStr = ($CleanLog -join " ; ") -replace "\|", "/" -replace "\x27", "" -replace "\x22", "" -replace "[\r\n]", " "
+            $CleanStr = $CleanLog -join " "
+            # Replace newlines and carriage returns with spaces first
+            $CleanStr = $CleanStr -replace "[\r\n]+", " "
+            # Keep only safe, printable ASCII characters (no single/double quotes, backticks, semicolons, or pipes)
+            $CleanStr = $CleanStr -replace "[^a-zA-Z0-9\.\,\-\_\:\/\(\)\[\]\+\s]", ""
+            # Condense multiple spaces into one
+            $CleanStr = $CleanStr -replace "\s{2,}", " "
             $GlobalLogSummary += "[$LoggedOnUser]: $CleanStr"
         }
 

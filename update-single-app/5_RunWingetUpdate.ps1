@@ -1,7 +1,9 @@
 # 5_RunWingetUpdate.ps1 - ConnectWise Automate compatible
 # Input/Output: Step|Username|Password|Result|WingetLog
 
-$State = '@state@'
+$State = @'
+@state@
+'@.Trim()
 $installapp = '@installapp@'
 
 $Parts = $State.Split('|')
@@ -151,7 +153,7 @@ try {
 $UpdateScriptContent | Out-File -FilePath $TempScriptPath -Encoding UTF8
 
 try {
-    $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$TempScriptPath`""
+    $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$TempScriptPath`""
     $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
     
@@ -200,12 +202,12 @@ try {
         }
         
         # --- CRITICAL FIX FOR AUTOMATE STRING INJECTION ---
-        $WingetLog = $WingetLog -replace "\|", "/" 
-        $WingetLog = $WingetLog -replace "\x27", ""   # Strip single quotes (Hex 27)
-        $WingetLog = $WingetLog -replace "\x22", ""   # Strip double quotes (Hex 22)
-        $WingetLog = $WingetLog -replace "\x0D", ""   # Remove carriage returns (Hex 0D)
-        $WingetLog = $WingetLog -replace "\x0A", " "  # Replace line breaks with spaces (Hex 0A)
-        $WingetLog = $WingetLog -replace "\s{2,}", " " # Condense multiple spaces into one
+        # Replace newlines and carriage returns with spaces first
+        $WingetLog = $WingetLog -replace "[\r\n]+", " "
+        # Keep only safe, printable ASCII characters (no single/double quotes, backticks, semicolons, or pipes)
+        $WingetLog = $WingetLog -replace "[^a-zA-Z0-9\.\,\-\_\:\/\(\)\[\]\+\s]", ""
+        # Condense multiple spaces into one
+        $WingetLog = $WingetLog -replace "\s{2,}", " "
         
         if ($WingetLog.Length -gt 2000) { $WingetLog = $WingetLog.Substring(0, 2000) + "..." }
     }
