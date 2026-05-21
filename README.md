@@ -53,6 +53,14 @@ Both workflows share the same state-passing mechanism:
 - Windows 10/11 or Server 2019+ (with App Installer/Winget support).
 - PowerShell 5.1.
 
+## Multi-Language & Non-English OS Support
+
+These scripts are specifically optimized to support non-English Windows environments (e.g., German, Spanish, French OS):
+- **Local Administrators SID-Based Translation**: Dynamic group name resolution via well-known SID `S-1-5-32-544` to seamlessly resolve local groups such as `Administratoren`, `Administradores`, or `Administrateurs`.
+- **Robust Membership Matching**: Split-prefix and wildcard matching on `Domain\Username` formats to avoid false negatives when checking if a user is already a local administrator.
+- **Dynamic Membership Catch Fallback**: Caught exceptions in group membership addition are verified dynamically against active group rosters to eliminate localized error string parsing failures.
+- **Safe-ASCII Log Whitelisting**: Safe ASCII-only sanitization (`[^a-zA-Z0-9\.\,\-\_\:\/\(\)\[\]\+\s]`) to wipe out localization garbage characters (e.g. `RedistributÇ½ƒ'ª`) and avoid premature CWA string preprocessor single-quote truncation parser errors.
+
 ## Disclaimer
 
 This project is not affiliated with, endorsed by, or sponsored by ConnectWise. ConnectWise Automate® is a registered trademark of ConnectWise, LLC. These scripts are provided "as is" without warranty of any kind. Use at your own risk.
