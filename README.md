@@ -72,6 +72,12 @@ graph TD
 
 ## 🛡️ Advanced Enterprise Features
 
+### 🔌 Three-Tier Robust Account Management Fallback
+To solve the notorious fragility of the PowerShell `Microsoft.PowerShell.LocalAccounts` module under the **SYSTEM** context (which frequently throws database state/SAM errors like `0xC000000C` / `3221226252`), all account management operations (creation, group assignment, enabling, disabling) implement a resilient, three-tier fallback architecture:
+1. **Tier 1 (Modern Cmdlets)**: Utilizes native PowerShell cmdlets (`Get-LocalUser`, `New-LocalUser`, `Enable-LocalUser`, etc.) for modern, high-level execution.
+2. **Tier 2 (ADSI WinNT Provider)**: Bypasses native wrappers to invoke .NET Active Directory Service Interfaces (`[ADSI]"WinNT://..."`) directly at the operating system API level, bypassing SAM-related cmdlet bugs.
+3. **Tier 3 (Legacy Win32 Binaries)**: Employs standard legacy `net.exe` command-line utilities (`net user`, `net localgroup`) as a guaranteed fail-safe execution tier.
+
 ### 🌎 Global & Non-English OS Support
 Standard scripts often fail on non-English Windows (e.g., German, Spanish, French) because system terms are localized. This wrapper uses deep Windows API compatibility:
 * **SID-Based Group Resolution**: Rather than looking for `"Administrators"`, the script queries SID `S-1-5-32-544` to dynamically identify the local administrators group (resolving seamlessly to `Administratoren`, `Administradores`, etc.).
