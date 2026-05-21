@@ -53,10 +53,65 @@ if (-not `$env:LOCALAPPDATA) { `$env:LOCALAPPDATA = "`$env:USERPROFILE\AppData\L
 
 Start-Transcript -Path '$LogPath' -Append
 try {
+    # 1. Proactively stop any hung msiexec processes to clear installer database locks
+    try {
+        Stop-Process -Name msiexec -Force -ErrorAction SilentlyContinue
+    } catch {}
+
+    # 2. Enable and start Windows Installer service to prevent 1601 errors
+    try {
+        Set-Service -Name msiserver -StartupType Manual -ErrorAction SilentlyContinue
+        Start-Service -Name msiserver -ErrorAction SilentlyContinue
+    } catch {}
+
     function Test-IsAdmin {
         `$currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
         `$principal = New-Object Security.Principal.WindowsPrincipal(`$currentUser)
         return `$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+
+    # Helper to execute WinGet with a strict 10-minute timeout per package to prevent background hangs
+    function Invoke-WingetCommand {
+        param(
+            [string]`$Arguments
+        )
+        
+        Write-Output "DEBUG: Running process: `$WingetCmd `$Arguments"
+        
+        try {
+            `$Proc = Start-Process -FilePath `$WingetCmd -ArgumentList `$Arguments -NoNewWindow -PassThru
+            
+            `$TimeoutSeconds = 600 # 10 minutes
+            `$Slept = 0
+            while (-not `$Proc.HasExited -and `$Slept -lt `$TimeoutSeconds) {
+                Start-Sleep -Seconds 5
+                `$Slept += 5
+            }
+            
+            if (-not `$Proc.HasExited) {
+                Write-Warning "Process timed out after `$TimeoutSeconds seconds. Terminating process and child installers."
+                try {
+                    Stop-Process -Id `$Proc.Id -Force -ErrorAction SilentlyContinue
+                    
+                    # Kill child processes spawned by this installer to clean up fully
+                    if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                        Get-CimInstance Win32_Process -Filter "ParentProcessId = `$(`$Proc.Id)" -ErrorAction SilentlyContinue | ForEach-Object {
+                            Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue
+                        }
+                    } elseif (Get-Command Get-WmiObject -ErrorAction SilentlyContinue) {
+                        Get-WmiObject Win32_Process -Filter "ParentProcessId = `$(`$Proc.Id)" -ErrorAction SilentlyContinue | ForEach-Object {
+                            Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                } catch {
+                    Write-Output "Warning during process termination: `$(`$_.Exception.Message)"
+                }
+            } else {
+                Write-Output "Process exited with code `$(`$Proc.ExitCode)."
+            }
+        } catch {
+            Write-Error "Failed to invoke winget: `$(`$_.Exception.Message)"
+        }
     }
 
     # Deep Initialization for WinGet in new user profile
@@ -136,7 +191,7 @@ try {
 
     if (`$IgnoreList.Count -eq 0) {
         Write-Output "No ignore list found or list is empty. Running upgrade --all..."
-        & `$WingetCmd upgrade --all --accept-package-agreements --accept-source-agreements --silent --include-unknown
+        Invoke-WingetCommand "upgrade --all --accept-package-agreements --accept-source-agreements --silent --disable-interactivity --scope machine --include-unknown"
     } else {
         Write-Output "Checking for available upgrades to apply exclusions..."
         `$Upgrades = & `$WingetCmd upgrade --accept-source-agreements
@@ -185,7 +240,7 @@ try {
                         Write-Output "Skipping ignored application: `$AppName (`$AppId)"
                     } elseif (`$AppId) {
                         Write-Output "Upgrading: `$AppName (`$AppId)..."
-                        & `$WingetCmd upgrade --id "`$AppId" --accept-package-agreements --accept-source-agreements --silent --include-unknown
+                        Invoke-WingetCommand "upgrade --id `"`$AppId`" --accept-package-agreements --accept-source-agreements --silent --disable-interactivity --scope machine --include-unknown"
                     }
                 }
             } else {

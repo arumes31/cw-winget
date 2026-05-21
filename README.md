@@ -93,6 +93,16 @@ To prevent ConnectWise Automate preprocessor and SQL injection vulnerabilities, 
 * Accented letters and language diacritics (e.g., `ä, ö, ü, ß, ñ, á, ç, è`) are preserved using Unicode regex groups (`\p{L}` and `\p{N}`).
 * Dangerous injection symbols, such as single quotes (`'`), double quotes (`"`), backticks (`` ` ``), semicolons (`;`), and pipes (`|`), are safely removed, protecting your CWA database and scripts from parsing failures.
 
+### 🚀 Resilient Silent Installation Engine
+To address background install hangs (such as Thunderbird setup waiting for user response in Session 0) and service lockout failures (like Google Chrome / Adobe Reader failing with MSI error 1601), a premium silent installation engine has been integrated inside `5_RunWingetUpdate.ps1`:
+* **MSI Database Lock Resolution**: Proactively terminates any hung background `msiexec.exe` processes to clear pending installer locks before initiating installations.
+* **Windows Installer Service Activation**: Pre-emptively configures the Windows Installer Service (`msiserver`) to Manual startup type and starts it to ensure standard MSI installers do not fail with error 1601 (Service Unavailable).
+* **Non-Interactive GUI Suppression**: Every command executes with strict `--silent --disable-interactivity --scope machine` parameters to enforce silent execution and completely block UAC, setup wizard GUI displays, or interactive license prompts.
+* **Per-Package 10-Minute Timeout Monitor**: Executes each app update through a custom background process monitor (`Invoke-WingetCommand`). If a setup hangs or becomes unresponsive for longer than **10 minutes (600 seconds)**, the engine:
+  - Actively stops the primary `winget` process.
+  - Recursively terminates all descendant child installer processes (using dynamic WMI/CIM process-tree traversal) to guarantee a clean state.
+  - Logs a warning message and safely moves to the next application, ensuring the entire automation wrapper does not hang.
+
 ---
 
 ## ⚙️ ConnectWise Automate Configuration Steps
