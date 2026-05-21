@@ -9,17 +9,17 @@ function Invoke-ScriptWithState {
     
     $Content = Get-Content (Join-Path $ScriptsDir $ScriptFile) -Raw
     # Simulate @state@ injection using single quotes for literal safety
-    $InjectedContent = $Content -replace "'@state@'", "'$CurrentState'"
+    $InjectedContent = $Content.Replace("'@state@'", "'$CurrentState'")
     
     if (-not [string]::IsNullOrWhiteSpace($InstallApp)) {
-        $InjectedContent = $InjectedContent -replace "'@installapp@'", "'$InstallApp'"
+        $InjectedContent = $InjectedContent.Replace("'@installapp@'", "'$InstallApp'")
     }
     
     $TempFile = Join-Path $env:TEMP "Simulate_$($ScriptFile)"
     $InjectedContent | Out-File $TempFile -Encoding UTF8
     
     try {
-        $Result = powershell.exe -File $TempFile -ErrorAction Stop
+        $Result = powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $TempFile -ErrorAction Stop
         if ($LASTEXITCODE -ne 0) { throw "Script failed with exit code $LASTEXITCODE" }
         return $Result
     }
@@ -33,7 +33,7 @@ Write-Host "--- Starting Winget Automated Update Simulation ---" -ForegroundColo
 # Step 1: Create/Update Temp Admin
 Write-Host "Step 1: Create/Update Temp Admin..."
 # Step 1 is strictly one line now
-$WingetState = powershell.exe -File (Join-Path $ScriptsDir "1_CreateTempAdmin.ps1")
+$WingetState = powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File (Join-Path $ScriptsDir "1_CreateTempAdmin.ps1")
 if ($LASTEXITCODE -ne 0) { Write-Error "Step 1 Failed"; exit 1 }
 Write-Host "Captured State: $WingetState"
 

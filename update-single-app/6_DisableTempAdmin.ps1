@@ -1,7 +1,9 @@
 # 6_DisableTempAdmin.ps1 - ConnectWise Automate compatible
 # Input/Output: Step|Username|Password|Result
 
-$State = '@state@'
+$State = @'
+@state@
+'@.Trim()
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
@@ -12,21 +14,74 @@ $Username = $Parts[1].Trim()
 $Password = $Parts[2].Trim()
 
 try {
-    $User = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
-    if (-not $User) {
-        Write-Output "6|${Username}|${Password}|UserNotFound"
-        return
+    # Tier 1: Modern PowerShell cmdlets
+    try {
+        $User = Get-LocalUser -Name $Username -ErrorAction Stop
+        if (-not $User.Enabled) {
+            Write-Output "6|${Username}|${Password}|AlreadyDisabled"
+            return
+        }
+        Disable-LocalUser -Name $Username -ErrorAction Stop
+        Write-Output "6|${Username}|${Password}|UserDisabled"
     }
-
-    if (-not $User.Enabled) {
-        Write-Output "6|${Username}|${Password}|AlreadyDisabled"
-        return
+    catch {
+        # Tier 2: ADSI WinNT provider fallback
+        try {
+            $User = [ADSI]"WinNT://$env:COMPUTERNAME/$Username,user"
+            if ($User.Name -eq $null) {
+                Write-Output "6|${Username}|${Password}|UserNotFound"
+                return
+            }
+            
+            $UserFlags = $User.Value("UserFlags")
+            $IsDisabled = (($UserFlags -band 2) -eq 2)
+            
+            if ($IsDisabled) {
+                Write-Output "6|${Username}|${Password}|AlreadyDisabled"
+                return
+            }
+            
+            # Disable the account by setting the account disable bit (2)
+            $User.Put("UserFlags", ($UserFlags -bor 2))
+            $User.SetInfo()
+            Write-Output "6|${Username}|${Password}|UserDisabled"
+        }
+        catch {
+            # Tier 3: Legacy net user fallback
+            try {
+                net user $Username > $null 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Output "6|${Username}|${Password}|UserNotFound"
+                    return
+                }
+                
+                # Check status via net user output
+                $UserInfo = net user $Username
+                $AccountActiveLine = $UserInfo | Where-Object { $_ -match "Account active|Konto aktiv" }
+                
+                if ($AccountActiveLine -match "No|Nein") {
+                    Write-Output "6|${Username}|${Password}|AlreadyDisabled"
+                    return
+                }
+                
+                $Proc = Start-Process net.exe -ArgumentList "user `"$Username`" /active:no" -NoNewWindow -PassThru -Wait
+                if ($Proc.ExitCode -ne 0) { throw "net user /active:no failed" }
+                Write-Output "6|${Username}|${Password}|UserDisabled"
+            }
+            catch {
+                throw "Failed to disable account ${Username} via local accounts, ADSI, or net user: $($_.Exception.Message)"
+            }
+        }
     }
-
-    Disable-LocalUser -Name $Username -ErrorAction Stop
-    Write-Output "6|${Username}|${Password}|UserDisabled"
 }
 catch {
-    Write-Error "Failed to disable user ${Username}: $($_.Exception.Message)"
-    exit 1
+    # If the user definitely doesn't exist, we should output UserNotFound instead of failing the script.
+    # We check if the exception indicates user not found.
+    if ($_.Exception.Message -match "The user was not found|PrincipalNotFoundException|UserNotFound") {
+        Write-Output "6|${Username}|${Password}|UserNotFound"
+    } else {
+        Write-Error "Failed to disable user ${Username}: $($_.Exception.Message)"
+        exit 1
+    }
 }
+

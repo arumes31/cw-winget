@@ -2,7 +2,9 @@
 # Purpose: Update User-scope apps for the logged-on user without UAC prompts.
 # Input/Output: Step|Username|Password|Result|UserWingetLog
 
-$State = '@state@'
+$State = @'
+@state@
+'@.Trim()
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
     Write-Error "Invalid state string."
@@ -19,10 +21,26 @@ foreach ($Proc in $ExplorerProcesses) {
         $Owner = Invoke-CimMethod -InputObject $Proc -MethodName "GetOwner"
         if ($Owner.ReturnValue -eq 0) {
             $FullUser = "$($Owner.Domain)\$($Owner.User)"
-            # Exclude our own TempAdmin and System accounts
-            if ($FullUser -notlike "*\TempAutomateAdmin" -and $FullUser -notmatch "SYSTEM|LOCAL SERVICE|NETWORK SERVICE") {
-                $ActiveUsers += $FullUser
+            # Exclude our own TempAdmin
+            if ($FullUser -like "*\TempAutomateAdmin") { continue }
+            
+            # Translate to SID to filter out SYSTEM, LOCAL SERVICE, and NETWORK SERVICE language-agnostically
+            try {
+                $NtAccount = New-Object System.Security.Principal.NTAccount($Owner.Domain, $Owner.User)
+                $Sid = $NtAccount.Translate([System.Security.Principal.SecurityIdentifier]).Value
+                # SIDs: S-1-5-18 (System), S-1-5-19 (Local Service), S-1-5-20 (Network Service)
+                if ($Sid -match "^S-1-5-1[89]$|^S-1-5-20$") {
+                    continue
+                }
             }
+            catch {
+                # Fallback to English string matching if translation fails
+                if ($FullUser -match "SYSTEM|LOCAL SERVICE|NETWORK SERVICE") {
+                    continue
+                }
+            }
+            
+            $ActiveUsers += $FullUser
         }
     } catch {}
 }
@@ -49,6 +67,10 @@ if (Test-Path $UserLogPath) { Remove-Item $UserLogPath -Force }
 
 # 2. Create the script to be run contextually as the user
 $UserScriptContent = @"
+Add-Type -Name Window -Namespace Win32 -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
+`$win = (Get-Process -Id `$PID).MainWindowHandle
+if (`$win -ne 0) { [Win32.Window]::ShowWindow(`$win, 0) }
+
 Start-Transcript -Path '$UserLogPath' -Append
 try {
     `$WingetCmd = "winget"
@@ -113,6 +135,9 @@ try {
                         `$AppId = `$Line.Substring(`$IdStart).Trim()
                     }
                     
+                    # Skip summary/warning lines that might be parsed on localized systems
+                    if (`$AppId.Contains(" ") -or `$AppId -match "\s") { continue }
+                    
                     `$Skip = `$false
                     foreach (`$IgnoreItem in `$IgnoreList) {
                         if (`$AppName.ToLower().Contains(`$IgnoreItem) -or `$AppId.ToLower().Contains(`$IgnoreItem)) {
@@ -146,7 +171,7 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
 
     try {
         # 3. Register task to run AS the logged-on user (Interactive)
-        $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$UserScriptPath`""
+        $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$UserScriptPath`""
         $Principal = New-ScheduledTaskPrincipal -UserId $LoggedOnUser -LogonType Interactive
         $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
         
@@ -161,7 +186,11 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
             Start-Sleep -Seconds 10
             $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
             if ($task -and $task.State -ne "Running") { break }
-            if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) { break }
+            if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) {
+                Write-Warning "Task timed out. Stopping task."
+                Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+                break
+            }
         } while ($true)
 
         # 4. Process Logs
@@ -173,16 +202,23 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
                 if ($line -match "^\*\*\*\*") { $InBlock = -not $InBlock; continue }
                 if (-not $InBlock -and $line.Trim()) { $CleanLog += $line.Trim() }
             }
-            $CleanStr = ($CleanLog -join " ; ") -replace "\|", "/" -replace "\x27", "" -replace "\x22", "" -replace "[\r\n]", " "
+            $CleanStr = $CleanLog -join " "
+            # Replace newlines and carriage returns with spaces first
+            $CleanStr = $CleanStr -replace "[\r\n]+", " "
+            # Keep only safe, printable alphanumeric and Unicode letter characters (no single/double quotes, backticks, semicolons, or pipes)
+            $CleanStr = $CleanStr -replace "[^][a-zA-Z0-9\p{L}\p{N}\s.,:_/()+-]", ""
+            # Condense multiple spaces into one
+            $CleanStr = $CleanStr -replace "\s{2,}", " "
             $GlobalLogSummary += "[$LoggedOnUser]: $CleanStr"
         }
-
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }
     catch {
         Write-Warning "Failed to run User Winget update for ${LoggedOnUser}: $($_.Exception.Message)"
     }
     finally {
+        if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+        }
         if (Test-Path $UserScriptPath) { Remove-Item -Path $UserScriptPath -Force -ErrorAction SilentlyContinue }
     }
 } # End of User Loop
