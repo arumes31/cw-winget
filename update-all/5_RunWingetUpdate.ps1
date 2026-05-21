@@ -80,7 +80,7 @@ try {
         Write-Output "DEBUG: Running process: `$WingetCmd `$Arguments"
         
         try {
-            `$PowershellArgs = "-NoProfile -ExecutionPolicy Bypass -Command & `"`$WingetCmd`" `$Arguments"
+            `$PowershellArgs = "-NoProfile -ExecutionPolicy Bypass -Command & `'$WingetCmd`' `$Arguments"
             `$Proc = Start-Process -FilePath "powershell.exe" -ArgumentList `$PowershellArgs -NoNewWindow -PassThru
             
             `$TimeoutSeconds = 600 # 10 minutes

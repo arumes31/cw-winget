@@ -206,7 +206,7 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
             # Replace newlines and carriage returns with spaces first
             $CleanStr = $CleanStr -replace "[\r\n]+", " "
             # Keep only safe, printable alphanumeric and Unicode letter characters (no single/double quotes, backticks, semicolons, or pipes)
-            $CleanStr = $CleanStr -replace "[^a-zA-Z0-9\p{L}\p{N}\.\,\-\_\:\/\(\)\[\]\+\s]", ""
+            $CleanStr = $CleanStr -replace "[^][a-zA-Z0-9\p{L}\p{N}\s.,:_/()+-]", ""
             # Condense multiple spaces into one
             $CleanStr = $CleanStr -replace "\s{2,}", " "
             $GlobalLogSummary += "[$LoggedOnUser]: $CleanStr"
