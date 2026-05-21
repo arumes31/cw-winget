@@ -20,16 +20,46 @@ try {
         $Translated = $AdminSid.Translate([System.Security.Principal.NTAccount]).Value
         $AdminGroup = $Translated.Split('\')[-1]
     }
-
+    
     $currentMembers = Get-LocalGroupMember -Group $AdminGroup -ErrorAction SilentlyContinue
-    if ($currentMembers -and ($currentMembers.Name -contains "${Username}" -or $currentMembers.Name -contains "$env:COMPUTERNAME\${Username}")) {
+    $alreadyAdmin = $false
+    if ($currentMembers) {
+        foreach ($member in $currentMembers) {
+            $mName = $member.Name
+            if ($mName -eq $Username -or (($mName -like "*\*") -and ($mName.Split('\')[-1] -eq $Username))) {
+                $alreadyAdmin = $true
+                break
+            }
+        }
+    }
+    
+    if ($alreadyAdmin) {
         Write-Output "2|${Username}|${Password}|AlreadyAdmin"
         return
     }
+    
     Add-LocalGroupMember -Group $AdminGroup -Member $Username -ErrorAction Stop
     Write-Output "2|${Username}|${Password}|AddedToAdmin"
 }
 catch {
+    # Double-check membership under localized system profiles where Add-LocalGroupMember
+    # might throw "already exists" exceptions in various languages (e.g. German "ist bereits ein Mitglied")
+    $currentMembers = Get-LocalGroupMember -Group $AdminGroup -ErrorAction SilentlyContinue
+    $alreadyAdmin = $false
+    if ($currentMembers) {
+        foreach ($member in $currentMembers) {
+            $mName = $member.Name
+            if ($mName -eq $Username -or (($mName -like "*\*") -and ($mName.Split('\')[-1] -eq $Username))) {
+                $alreadyAdmin = $true
+                break
+            }
+        }
+    }
+    if ($alreadyAdmin) {
+        Write-Output "2|${Username}|${Password}|AlreadyAdmin"
+        return
+    }
+    
     Write-Error "Failed to add ${Username} to $($AdminGroup): $($_.Exception.Message)"
     exit 1
 }

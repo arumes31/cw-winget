@@ -1,7 +1,9 @@
 # 6_DisableTempAdmin.ps1 - ConnectWise Automate compatible
 # Input/Output: Step|Username|Password|Result
 
-$State = '@state@'
+$State = @'
+@state@
+'@.Trim()
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {

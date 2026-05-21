@@ -1,7 +1,9 @@
 # 5_RunWingetUpdate.ps1 - ConnectWise Automate compatible
 # Input/Output: Step|Username|Password|Result|WingetLog
 
-$State = '@state@'
+$State = @'
+@state@
+'@.Trim()
 $installapp = '@installapp@'
 
 $Parts = $State.Split('|')
@@ -71,7 +73,7 @@ try {
         if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
             Install-PackageProvider -Name 'NuGet' -Force -ErrorAction SilentlyContinue
             Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:$false -Scope CurrentUser -ErrorAction SilentlyContinue
+            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:`$false -Scope CurrentUser -ErrorAction SilentlyContinue
         }
         
         Import-Module Microsoft.WinGet.Client -ErrorAction SilentlyContinue
@@ -118,9 +120,9 @@ try {
     & `$WingetCmd source reset --force
     & `$WingetCmd source update
 
-    # Stabilization delay to ensure source index is flushed to disk
     Start-Sleep -Seconds 10
-
+    & `$WingetCmd source list
+    & `$WingetCmd search "NuGet" --accept-source-agreements | Out-Null
 
     # Pass variables from outer scope to inner scope
     `$installapp = '$installapp'
@@ -163,7 +165,7 @@ try {
 $UpdateScriptContent | Out-File -FilePath $TempScriptPath -Encoding UTF8
 
 try {
-    $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$TempScriptPath`""
+    $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$TempScriptPath`""
     $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
     
@@ -189,48 +191,36 @@ try {
     $WingetLog = "No log found"
     if (Test-Path $LogPath) {
         $RawLog = Get-Content $LogPath
-        $CleanLog = $RawLog | Where-Object { 
-            $_ -notmatch "^\*\*\*\*" -and 
-            $_ -notmatch "^Windows PowerShell transcript" -and
-            $_ -notmatch "^Start time:" -and
-            $_ -notmatch "^Username:" -and
-            $_ -notmatch "^RunAs User:" -and
-            $_ -notmatch "^Configuration Name:" -and
-            $_ -notmatch "^Machine:" -and
-            $_ -notmatch "^Host Application:" -and
-            $_ -notmatch "^Process ID:" -and
-            $_ -notmatch "^PSVersion:" -and
-            $_ -notmatch "^PSEdition:" -and
-            $_ -notmatch "^PSCompatibleVersions:" -and
-            $_ -notmatch "^BuildVersion:" -and
-            $_ -notmatch "^CLRVersion:" -and
-            $_ -notmatch "^WSManStackVersion:" -and
-            $_ -notmatch "^PSRemotingProtocolVersion:" -and
-            $_ -notmatch "^SerializationVersion:" -and
-            $_ -notmatch "^Transcript started" -and
-            $_ -notmatch "^End time:" -and
-            $_ -notmatch "o{10,}" -and # Match long progress bars (10+ o's)
-            $_ -notmatch "^Deployment operation progress" -and
-            $_ -notmatch "^Updating source:" -and
-            $_ -notmatch "^Resetting all sources" -and
-            $_ -notmatch "^The 'msstore' source requires" -and
-            $_ -notmatch "^Terms of Transaction" -and
-            $_ -notmatch "^The source requires the current machine" -and
-            $_ -notmatch "^usage: winget" -and
-            $_ -notmatch "^The following arguments are available:" -and
-            $_ -notmatch "^The following options are available:" -and
-            $_ -notmatch "^The following command aliases are available" -and
-            $_ -notmatch "^Prompts the user to press any key" -and
-            $_ -notmatch "^--logs,--open-logs" -and
-            $_ -notmatch "^--verbose,--verbose-logs" -and
-            $_ -notmatch "^--nowarn,--ignore-warnings" -and
-            $_ -notmatch "^--disable-interactivity" -and
-            $_ -notmatch "^--proxy" -and
-            $_ -notmatch "^--no-proxy" -and
-            $_.Trim() -ne ""
+        $CleanLog = @()
+        $InTranscriptBlock = $false
+        
+        # LANGUAGE-AGNOSTIC LOG CLEANUP: Drops everything between the "****" boundary boxes
+        foreach ($line in $RawLog) {
+            if ($line -match "^\*\*\*\*") {
+                $InTranscriptBlock = -not $InTranscriptBlock
+                continue
+            }
+            if (-not $InTranscriptBlock) {
+                if ($line.Trim() -ne "" -and $line -notmatch "o{10,}" -and $line -notmatch "\[=*\]") {
+                    $CleanLog += $line.Trim()
+                }
+            }
         }
-        $WingetLog = $CleanLog -join " ; "
-        $WingetLog = $WingetLog -replace "\|", "/" 
+        
+        if ($CleanLog.Count -eq 0) {
+            $WingetLog = "Log was empty or fully filtered."
+        } else {
+            $WingetLog = $CleanLog -join " ; "
+        }
+        
+        # --- CRITICAL FIX FOR AUTOMATE STRING INJECTION ---
+        # Replace newlines and carriage returns with spaces first
+        $WingetLog = $WingetLog -replace "[\r\n]+", " "
+        # Keep only safe, printable ASCII characters (no single/double quotes, backticks, semicolons, or pipes)
+        $WingetLog = $WingetLog -replace "[^a-zA-Z0-9\.\,\-\_\:\/\(\)\[\]\+\s]", ""
+        # Condense multiple spaces into one
+        $WingetLog = $WingetLog -replace "\s{2,}", " "
+        
         if ($WingetLog.Length -gt 2000) { $WingetLog = $WingetLog.Substring(0, 2000) + "..." }
     }
 

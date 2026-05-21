@@ -1,7 +1,9 @@
 # 5_RunWingetUpdate.ps1 - ConnectWise Automate compatible
 # Input/Output: Step|Username|Password|Result|WingetLog
 
-$State = '@state@'
+$State = @'
+@state@
+'@.Trim()
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
@@ -68,7 +70,7 @@ try {
         if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
             Install-PackageProvider -Name 'NuGet' -Force -ErrorAction SilentlyContinue
             Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:$false -Scope CurrentUser -ErrorAction SilentlyContinue
+            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:`$false -Scope CurrentUser -ErrorAction SilentlyContinue
         }
         
         Import-Module Microsoft.WinGet.Client -ErrorAction SilentlyContinue
@@ -124,8 +126,72 @@ try {
     # Trigger index creation
     & `$WingetCmd search "NuGet" --accept-source-agreements | Out-Null
 
-    # Run updates (including --include-unknown for Store apps as requested)
-    & `$WingetCmd upgrade --all --accept-package-agreements --accept-source-agreements --silent --include-unknown
+    # --- IGNORING LOGIC AND UPGRADE EXECUTION ---
+    `$IgnoreFile = "C:\Windows\LTSvc\eworx\winget\ignoredprograms.txt"
+    `$IgnoreList = @()
+    if (Test-Path `$IgnoreFile) {
+        `$IgnoreList = Get-Content `$IgnoreFile | Where-Object { `$_.Trim() -ne "" } | ForEach-Object { `$_.Trim().ToLower() }
+        Write-Output "Loaded `$(`$IgnoreList.Count) ignore entries from `$IgnoreFile"
+    }
+
+    if (`$IgnoreList.Count -eq 0) {
+        Write-Output "No ignore list found or list is empty. Running upgrade --all..."
+        & `$WingetCmd upgrade --all --accept-package-agreements --accept-source-agreements --silent --include-unknown
+    } else {
+        Write-Output "Checking for available upgrades to apply exclusions..."
+        `$Upgrades = & `$WingetCmd upgrade --accept-source-agreements
+        
+        # LANGUAGE-AGNOSTIC PARSING: Find the dashed line to identify headers and columns
+        `$DashLine = `$Upgrades | Where-Object { `$_ -match "^-{10,}" } | Select-Object -First 1
+        `$DashIndex = [array]::IndexOf(`$Upgrades, `$DashLine)
+
+        if (`$DashIndex -gt 0 -and `$DashIndex -lt (`$Upgrades.Count - 1)) {
+            `$HeaderLine = `$Upgrades[`$DashIndex - 1]
+            `$HeaderParts = `$HeaderLine -split '\s{2,}'
+            
+            if (`$HeaderParts.Count -ge 3) {
+                `$IdHeader = `$HeaderParts[1]
+                `$VersionHeader = `$HeaderParts[2]
+                
+                `$IdStart = `$HeaderLine.IndexOf(`$IdHeader)
+                `$VersionStart = `$HeaderLine.IndexOf(`$VersionHeader)
+                `$IdLength = `$VersionStart - `$IdStart
+
+                for (`$i = `$DashIndex + 1; `$i -lt `$Upgrades.Count; `$i++) {
+                    `$Line = `$Upgrades[`$i]
+                    if ([string]::IsNullOrWhiteSpace(`$Line)) { continue }
+                    if (`$Line.Length -lt `$IdStart) { continue }
+                    
+                    `$AppName = `$Line.Substring(0, `$IdStart).Trim()
+                    `$AppId = ""
+                    if (`$Line.Length -ge `$VersionStart) {
+                        `$AppId = `$Line.Substring(`$IdStart, `$IdLength).Trim()
+                    } else {
+                        `$AppId = `$Line.Substring(`$IdStart).Trim()
+                    }
+                    
+                    `$Skip = `$false
+                    foreach (`$IgnoreItem in `$IgnoreList) {
+                        if (`$AppName.ToLower().Contains(`$IgnoreItem) -or `$AppId.ToLower().Contains(`$IgnoreItem)) {
+                            `$Skip = `$true
+                            break
+                        }
+                    }
+                    
+                    if (`$Skip) {
+                        Write-Output "Skipping ignored application: `$AppName (`$AppId)"
+                    } elseif (`$AppId) {
+                        Write-Output "Upgrading: `$AppName (`$AppId)..."
+                        & `$WingetCmd upgrade --id "`$AppId" --accept-package-agreements --accept-source-agreements --silent --include-unknown
+                    }
+                }
+            } else {
+                Write-Output "Could not reliably parse column headers."
+            }
+        } else {
+            Write-Output "No valid upgrade data rows found or no upgrades available."
+        }
+    }
 
 } catch {
     Write-Error "Inner Script Failure: `$(`$_.Exception.Message)"
@@ -138,7 +204,7 @@ try {
 $UpdateScriptContent | Out-File -FilePath $TempScriptPath -Encoding UTF8
 
 try {
-    $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$TempScriptPath`""
+    $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$TempScriptPath`""
     $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
     
@@ -164,48 +230,36 @@ try {
     $WingetLog = "No log found"
     if (Test-Path $LogPath) {
         $RawLog = Get-Content $LogPath
-        $CleanLog = $RawLog | Where-Object { 
-            $_ -notmatch "^\*\*\*\*" -and 
-            $_ -notmatch "^Windows PowerShell transcript" -and
-            $_ -notmatch "^Start time:" -and
-            $_ -notmatch "^Username:" -and
-            $_ -notmatch "^RunAs User:" -and
-            $_ -notmatch "^Configuration Name:" -and
-            $_ -notmatch "^Machine:" -and
-            $_ -notmatch "^Host Application:" -and
-            $_ -notmatch "^Process ID:" -and
-            $_ -notmatch "^PSVersion:" -and
-            $_ -notmatch "^PSEdition:" -and
-            $_ -notmatch "^PSCompatibleVersions:" -and
-            $_ -notmatch "^BuildVersion:" -and
-            $_ -notmatch "^CLRVersion:" -and
-            $_ -notmatch "^WSManStackVersion:" -and
-            $_ -notmatch "^PSRemotingProtocolVersion:" -and
-            $_ -notmatch "^SerializationVersion:" -and
-            $_ -notmatch "^Transcript started" -and
-            $_ -notmatch "^End time:" -and
-            $_ -notmatch "o{10,}" -and # Match long progress bars (10+ o's)
-            $_ -notmatch "^Deployment operation progress" -and
-            $_ -notmatch "^Updating source:" -and
-            $_ -notmatch "^Resetting all sources" -and
-            $_ -notmatch "^The 'msstore' source requires" -and
-            $_ -notmatch "^Terms of Transaction" -and
-            $_ -notmatch "^The source requires the current machine" -and
-            $_ -notmatch "^usage: winget" -and
-            $_ -notmatch "^The following arguments are available:" -and
-            $_ -notmatch "^The following options are available:" -and
-            $_ -notmatch "^The following command aliases are available" -and
-            $_ -notmatch "^Prompts the user to press any key" -and
-            $_ -notmatch "^--logs,--open-logs" -and
-            $_ -notmatch "^--verbose,--verbose-logs" -and
-            $_ -notmatch "^--nowarn,--ignore-warnings" -and
-            $_ -notmatch "^--disable-interactivity" -and
-            $_ -notmatch "^--proxy" -and
-            $_ -notmatch "^--no-proxy" -and
-            $_.Trim() -ne ""
+        $CleanLog = @()
+        $InTranscriptBlock = $false
+        
+        # LANGUAGE-AGNOSTIC LOG CLEANUP: Drops everything between the transcript boundary boxes
+        foreach ($line in $RawLog) {
+            if ($line -match "^\*\*\*\*") {
+                $InTranscriptBlock = -not $InTranscriptBlock
+                continue
+            }
+            if (-not $InTranscriptBlock) {
+                if ($line.Trim() -ne "" -and $line -notmatch "o{10,}" -and $line -notmatch "\[=*\]") {
+                    $CleanLog += $line.Trim()
+                }
+            }
         }
-        $WingetLog = $CleanLog -join " ; "
-        $WingetLog = $WingetLog -replace "\|", "/" 
+        
+        if ($CleanLog.Count -eq 0) {
+            $WingetLog = "Log was empty or fully filtered."
+        } else {
+            $WingetLog = $CleanLog -join " ; "
+        }
+        
+        # --- CRITICAL FIX FOR AUTOMATE STRING INJECTION ---
+        # Replace newlines and carriage returns with spaces first
+        $WingetLog = $WingetLog -replace "[\r\n]+", " "
+        # Keep only safe, printable ASCII characters (no single/double quotes, backticks, semicolons, or pipes)
+        $WingetLog = $WingetLog -replace "[^a-zA-Z0-9\.\,\-\_\:\/\(\)\[\]\+\s]", ""
+        # Condense multiple spaces into one
+        $WingetLog = $WingetLog -replace "\s{2,}", " "
+        
         if ($WingetLog.Length -gt 2000) { $WingetLog = $WingetLog.Substring(0, 2000) + "..." }
     }
 
