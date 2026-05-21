@@ -186,7 +186,11 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
             Start-Sleep -Seconds 10
             $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
             if ($task -and $task.State -ne "Running") { break }
-            if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) { break }
+            if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) {
+                Write-Warning "Task timed out. Stopping task."
+                Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+                break
+            }
         } while ($true)
 
         # 4. Process Logs
@@ -201,19 +205,20 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
             $CleanStr = $CleanLog -join " "
             # Replace newlines and carriage returns with spaces first
             $CleanStr = $CleanStr -replace "[\r\n]+", " "
-            # Keep only safe, printable ASCII characters (no single/double quotes, backticks, semicolons, or pipes)
-            $CleanStr = $CleanStr -replace "[^a-zA-Z0-9\.\,\-\_\:\/\(\)\[\]\+\s]", ""
+            # Keep only safe, printable alphanumeric and Unicode letter characters (no single/double quotes, backticks, semicolons, or pipes)
+            $CleanStr = $CleanStr -replace "[^a-zA-Z0-9\p{L}\p{N}\.\,\-\_\:\/\(\)\[\]\+\s]", ""
             # Condense multiple spaces into one
             $CleanStr = $CleanStr -replace "\s{2,}", " "
             $GlobalLogSummary += "[$LoggedOnUser]: $CleanStr"
         }
-
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }
     catch {
         Write-Warning "Failed to run User Winget update for ${LoggedOnUser}: $($_.Exception.Message)"
     }
     finally {
+        if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+        }
         if (Test-Path $UserScriptPath) { Remove-Item -Path $UserScriptPath -Force -ErrorAction SilentlyContinue }
     }
 } # End of User Loop

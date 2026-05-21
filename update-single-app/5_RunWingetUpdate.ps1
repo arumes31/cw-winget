@@ -185,7 +185,11 @@ try {
             $taskFinished = $true
             break
         }
-        if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) { break }
+        if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) {
+            Write-Warning "Task timed out. Stopping task."
+            Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+            break
+        }
     } while ($true)
 
     $WingetLog = "No log found"
@@ -216,8 +220,8 @@ try {
         # --- CRITICAL FIX FOR AUTOMATE STRING INJECTION ---
         # Replace newlines and carriage returns with spaces first
         $WingetLog = $WingetLog -replace "[\r\n]+", " "
-        # Keep only safe, printable ASCII characters (no single/double quotes, backticks, semicolons, or pipes)
-        $WingetLog = $WingetLog -replace "[^a-zA-Z0-9\.\,\-\_\:\/\(\)\[\]\+\s]", ""
+        # Keep only safe, printable alphanumeric and Unicode letter characters (no single/double quotes, backticks, semicolons, or pipes)
+        $WingetLog = $WingetLog -replace "[^a-zA-Z0-9\p{L}\p{N}\.\,\-\_\:\/\(\)\[\]\+\s]", ""
         # Condense multiple spaces into one
         $WingetLog = $WingetLog -replace "\s{2,}", " "
         
@@ -230,7 +234,6 @@ try {
         exit 1
     }
     
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     Write-Output "5|${Username}|${Password}|WingetUpdated|${WingetLog}"
 }
 catch {
@@ -238,5 +241,8 @@ catch {
     exit 1
 }
 finally {
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+    }
     if (Test-Path $TempScriptPath) { Remove-Item -Path $TempScriptPath -Force -ErrorAction SilentlyContinue }
 }
