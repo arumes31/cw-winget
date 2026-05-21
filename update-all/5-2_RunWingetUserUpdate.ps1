@@ -67,10 +67,6 @@ if (Test-Path $UserLogPath) { Remove-Item $UserLogPath -Force }
 
 # 2. Create the script to be run contextually as the user
 $UserScriptContent = @"
-Add-Type -Name Window -Namespace Win32 -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
-`$win = (Get-Process -Id `$PID).MainWindowHandle
-if (`$win -ne 0) { [Win32.Window]::ShowWindow(`$win, 0) }
-
 Start-Transcript -Path '$UserLogPath' -Append
 try {
     function Invoke-WingetSilent {
@@ -79,25 +75,28 @@ try {
             [bool]`$CaptureOutput = `$false
         )
         
+        `$TempFile = Join-Path `$env:TEMP "winget_out_`$(Get-Random).txt"
         try {
+            `$CmdLine = "`"`$WingetCmd`" `$Arguments > `"`$TempFile`" 2>&1"
             `$Psi = New-Object System.Diagnostics.ProcessStartInfo
-            `$Psi.FileName = `$WingetCmd
-            `$Psi.Arguments = `$Arguments
+            `$Psi.FileName = "cmd.exe"
+            `$Psi.Arguments = "/c `"`$CmdLine`""
             `$Psi.UseShellExecute = `$false
             `$Psi.CreateNoWindow = `$true
-            `$Psi.RedirectStandardOutput = `$true
-            `$Psi.RedirectStandardError = `$true
             
             `$Process = [System.Diagnostics.Process]::Start(`$Psi)
-            `$Output = `$Process.StandardOutput.ReadToEnd()
-            `$ErrorOut = `$Process.StandardError.ReadToEnd()
             `$Process.WaitForExit()
             
-            if (`$CaptureOutput) {
-                return `$Output -split "\r?\n"
-            } else {
-                if (`$Output) { Write-Output `$Output }
-                if (`$ErrorOut) { Write-Error `$ErrorOut }
+            if (Test-Path `$TempFile) {
+                `$Content = Get-Content `$TempFile
+                Remove-Item `$TempFile -Force -ErrorAction SilentlyContinue
+                if (`$CaptureOutput) {
+                    return `$Content
+                } else {
+                    foreach (`$Line in `$Content) {
+                        Write-Output `$Line
+                    }
+                }
             }
         } catch {
             Write-Error "Failed running winget `$Arguments: `$(`$_.Exception.Message)"
