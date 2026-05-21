@@ -74,6 +74,7 @@ try {
     }
 
     # Helper to execute WinGet with a strict 10-minute timeout per package to prevent background hangs
+    # We execute winget via a child powershell.exe process to bypass Appx alias tracking limitations in Session 0
     function Invoke-WingetCommand {
         param(
             [string]`$Arguments
@@ -82,7 +83,8 @@ try {
         Write-Output "DEBUG: Running process: `$WingetCmd `$Arguments"
         
         try {
-            `$Proc = Start-Process -FilePath `$WingetCmd -ArgumentList `$Arguments -NoNewWindow -PassThru
+            `$PowershellArgs = "-NoProfile -ExecutionPolicy Bypass -Command & `"`$WingetCmd`" `$Arguments"
+            `$Proc = Start-Process -FilePath "powershell.exe" -ArgumentList `$PowershellArgs -NoNewWindow -PassThru
             
             `$TimeoutSeconds = 600 # 10 minutes
             `$Slept = 0
@@ -110,7 +112,10 @@ try {
                     Write-Output "Warning during process termination: `$(`$_.Exception.Message)"
                 }
             } else {
-                Write-Output "Process exited with code `$(`$Proc.ExitCode)."
+                # Read exit code from powershell process (which propagates winget's exit code)
+                `$ExitCode = `$Proc.ExitCode
+                if (`$ExitCode -eq `$null) { `$ExitCode = 0 }
+                Write-Output "Process exited with code `$ExitCode."
             }
         } catch {
             Write-Error "Failed to invoke winget: `$(`$_.Exception.Message)"
