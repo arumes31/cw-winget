@@ -170,6 +170,9 @@ try {
                         `$AppId = `$Line.Substring(`$IdStart).Trim()
                     }
                     
+                    # Skip summary/warning lines that might be parsed on localized systems
+                    if (`$AppId.Contains(" ") -or `$AppId -match "\s") { continue }
+                    
                     `$Skip = `$false
                     foreach (`$IgnoreItem in `$IgnoreList) {
                         if (`$AppName.ToLower().Contains(`$IgnoreItem) -or `$AppId.ToLower().Contains(`$IgnoreItem)) {

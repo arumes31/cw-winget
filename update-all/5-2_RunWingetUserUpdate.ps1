@@ -21,10 +21,26 @@ foreach ($Proc in $ExplorerProcesses) {
         $Owner = Invoke-CimMethod -InputObject $Proc -MethodName "GetOwner"
         if ($Owner.ReturnValue -eq 0) {
             $FullUser = "$($Owner.Domain)\$($Owner.User)"
-            # Exclude our own TempAdmin and System accounts
-            if ($FullUser -notlike "*\TempAutomateAdmin" -and $FullUser -notmatch "SYSTEM|LOCAL SERVICE|NETWORK SERVICE") {
-                $ActiveUsers += $FullUser
+            # Exclude our own TempAdmin
+            if ($FullUser -like "*\TempAutomateAdmin") { continue }
+            
+            # Translate to SID to filter out SYSTEM, LOCAL SERVICE, and NETWORK SERVICE language-agnostically
+            try {
+                $NtAccount = New-Object System.Security.Principal.NTAccount($Owner.Domain, $Owner.User)
+                $Sid = $NtAccount.Translate([System.Security.Principal.SecurityIdentifier]).Value
+                # SIDs: S-1-5-18 (System), S-1-5-19 (Local Service), S-1-5-20 (Network Service)
+                if ($Sid -match "^S-1-5-1[89]$|^S-1-5-20$") {
+                    continue
+                }
             }
+            catch {
+                # Fallback to English string matching if translation fails
+                if ($FullUser -match "SYSTEM|LOCAL SERVICE|NETWORK SERVICE") {
+                    continue
+                }
+            }
+            
+            $ActiveUsers += $FullUser
         }
     } catch {}
 }
@@ -118,6 +134,9 @@ try {
                     } else {
                         `$AppId = `$Line.Substring(`$IdStart).Trim()
                     }
+                    
+                    # Skip summary/warning lines that might be parsed on localized systems
+                    if (`$AppId.Contains(" ") -or `$AppId -match "\s") { continue }
                     
                     `$Skip = `$false
                     foreach (`$IgnoreItem in `$IgnoreList) {
