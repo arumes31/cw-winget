@@ -263,7 +263,6 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
                         $line -match "\d+\s*(?:KB|MB|GB|B)\s*/\s*\d+\s*(?:KB|MB|GB|B)" -or 
                         $line -match "%" -or 
                         $line -match "[\u2580-\u259F]" -or
-                        $line -match "███|░░░|▒▒▒|▓▓▓" -or
                         $line -match "^\s*[-/\\| ]+$") {
                         continue
                     }
