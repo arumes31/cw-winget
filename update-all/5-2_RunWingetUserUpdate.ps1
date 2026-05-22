@@ -257,7 +257,18 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
             $InBlock = $false
             foreach ($line in $RawLog) {
                 if ($line -match "^\*\*\*\*") { $InBlock = -not $InBlock; continue }
-                if (-not $InBlock -and $line.Trim()) { $CleanLog += $line.Trim() }
+                if (-not $InBlock -and $line.Trim()) {
+                    # Skip progress bar, download statistics, spinner, and block-drawing characters
+                    if ($line -match "^\s*[-/\\ ]+\d+\s*(?:KB|MB|GB|B)" -or 
+                        $line -match "\d+\s*(?:KB|MB|GB|B)\s*/\s*\d+\s*(?:KB|MB|GB|B)" -or 
+                        $line -match "%" -or 
+                        $line -match "[\u2580-\u259F]" -or
+                        $line -match "███|░░░|▒▒▒|▓▓▓" -or
+                        $line -match "^\s*[-/\\| ]+$") {
+                        continue
+                    }
+                    $CleanLog += $line.Trim()
+                }
             }
             $CleanStr = $CleanLog -join " "
             # Replace newlines and carriage returns with spaces first

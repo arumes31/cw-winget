@@ -265,6 +265,15 @@ try {
             }
             if (-not $InTranscriptBlock) {
                 if ($line.Trim() -ne "" -and $line -notmatch "o{10,}" -and $line -notmatch "\[=*\]") {
+                    # Skip progress bar, download statistics, spinner, and block-drawing characters
+                    if ($line -match "^\s*[-/\\ ]+\d+\s*(?:KB|MB|GB|B)" -or 
+                        $line -match "\d+\s*(?:KB|MB|GB|B)\s*/\s*\d+\s*(?:KB|MB|GB|B)" -or 
+                        $line -match "%" -or 
+                        $line -match "[\u2580-\u259F]" -or
+                        $line -match "███|░░░|▒▒▒|▓▓▓" -or
+                        $line -match "^\s*[-/\\| ]+$") {
+                        continue
+                    }
                     $CleanLog += $line.Trim()
                 }
             }
