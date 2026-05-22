@@ -200,7 +200,7 @@ try {
                             Write-Output "Skipping ignored user application: $AppName ($AppId)"
                         } elseif ($AppId) {
                             Write-Output "Upgrading User App: $AppName ($AppId)..."
-                            Invoke-WingetSilent "upgrade --id '$AppId' --scope user --accept-package-agreements --accept-source-agreements --silent --include-unknown"
+                            Invoke-WingetSilent "upgrade --id $AppId --scope user --accept-package-agreements --accept-source-agreements --silent --include-unknown"
                         }
                     }
                 } else {
