@@ -73,7 +73,6 @@ try {
 
 $UserLogPath = Join-Path -Path $WorkDir -ChildPath "user-winget-log.txt"
 $UserScriptPath = Join-Path -Path $WorkDir -ChildPath "UserWingetUpdate_$(Get-Random).ps1"
-$UserLauncherPath = Join-Path -Path $WorkDir -ChildPath "LaunchUserUpdate_$(Get-Random).vbs"
 
 if (Test-Path $UserLogPath) { Remove-Item $UserLogPath -Force }
 
@@ -215,16 +214,12 @@ $UserScriptContent = $UserScriptContent.Replace('__LOGGED_ON_USER__', $LoggedOnU
 
 $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
 
-# # Create a tiny launcher VBScript that runs the PowerShell process in a 100% invisible window
-$VbsContent = "Set WshShell = CreateObject(`"WScript.Shell`")`r`nWshShell.Run `"powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"`"$UserScriptPath`"`"`", 0, True"
-$VbsContent | Out-File -FilePath $UserLauncherPath -Encoding ASCII
- 
     try {
-        # 3. Register task to run AS the logged-on user (Interactive) using the silent VBS launcher
-        # Resolve absolute path to wscript.exe and pass silent batch flags (//B //Nologo) to prevent dialog popups
-        $WscriptPath = Join-Path $env:SystemRoot "System32\wscript.exe"
-        if (-not (Test-Path $WscriptPath)) { $WscriptPath = "wscript.exe" }
-        $Action = New-ScheduledTaskAction -Execute $WscriptPath -Argument "//B //Nologo `"$UserLauncherPath`""
+        # 3. Register task to run AS the logged-on user (Interactive) using powershell.exe directly with Hidden window style
+        # This completely bypasses the need for wscript.exe and .vbs launchers, avoiding corporate Windows Script Host disabling policies
+        $PowershellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        if (-not (Test-Path $PowershellPath)) { $PowershellPath = "powershell.exe" }
+        $Action = New-ScheduledTaskAction -Execute $PowershellPath -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$UserScriptPath`""
         
         $Principal = New-ScheduledTaskPrincipal -UserId $UserSid -LogonType Interactive
         $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
@@ -239,13 +234,21 @@ $VbsContent | Out-File -FilePath $UserLauncherPath -Encoding ASCII
         do {
             Start-Sleep -Seconds 10
             $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-            if ($task -and $task.State -ne "Running") { break }
+            if (-not $task) {
+                Write-Warning "Scheduled task $TaskName not found."
+                break
+            }
+            if ($task.State -ne "Running") { break }
             if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) {
                 Write-Warning "Task timed out. Stopping task."
                 Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
                 break
             }
         } while ($true)
+
+        # Retrieve scheduled task info to check LastTaskResult
+        $taskInfo = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
+        $LastResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { "Unknown" }
 
         # 4. Process Logs
         if (Test-Path $UserLogPath) {
@@ -264,6 +267,8 @@ $VbsContent | Out-File -FilePath $UserLauncherPath -Encoding ASCII
             # Condense multiple spaces into one
             $CleanStr = $CleanStr -replace "\s{2,}", " "
             $GlobalLogSummary += "[$LoggedOnUser]: $CleanStr"
+        } else {
+            $GlobalLogSummary += "[$LoggedOnUser]: ERROR - Log file not generated (TaskResult: $LastResult)"
         }
     }
     catch {
@@ -276,7 +281,6 @@ $VbsContent | Out-File -FilePath $UserLauncherPath -Encoding ASCII
             Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
         }
         if (Test-Path $UserScriptPath) { Remove-Item -Path $UserScriptPath -Force -ErrorAction SilentlyContinue }
-        if (Test-Path $UserLauncherPath) { Remove-Item -Path $UserLauncherPath -Force -ErrorAction SilentlyContinue }
     }
 } # End of User Loop
 
