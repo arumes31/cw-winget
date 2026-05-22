@@ -2,6 +2,27 @@
 # Purpose: Update User-scope apps for the logged-on user without UAC prompts.
 # Input/Output: Step|Username|Password|Result|UserWingetLog
 
+# Hide the console window immediately to ensure 100% silent execution
+try {
+    $Win32Utils = [Win32.Win32Utils]
+} catch {
+    $MemberDefinition = @'
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetConsoleWindow();
+'@
+    try {
+        $Win32Utils = Add-Type -MemberDefinition $MemberDefinition -Name "Win32Utils" -Namespace "Win32" -PassThru -ErrorAction SilentlyContinue
+    } catch {}
+}
+if ($Win32Utils) {
+    $Hwnd = $Win32Utils::GetConsoleWindow()
+    if ($Hwnd -ne [IntPtr]::Zero) {
+        $null = $Win32Utils::ShowWindow($Hwnd, 0) # 0 = SW_HIDE
+    }
+}
+
 $State = @'
 @state@
 '@.Trim()
@@ -74,11 +95,28 @@ try {
 }
 $UserLogPath = Join-Path -Path $WorkDir -ChildPath "user-winget-log.txt"
 $UserScriptPath = Join-Path -Path $WorkDir -ChildPath "UserWingetUpdate_$(Get-Random).ps1"
+$UserLauncherPath = Join-Path -Path $WorkDir -ChildPath "UserWingetLauncher_$(Get-Random).vbs"
 
 if (Test-Path $UserLogPath) { Remove-Item $UserLogPath -Force }
 
 # 2. Create the script to be run contextually as the user (using single-quoted here-string for safety)
 $UserScriptContent = @'
+# Hide the console window immediately to ensure 100% silent execution
+try {
+    $Win32Utils = [Win32.Win32Utils]
+} catch {
+    $MemberDefinition = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();'
+    try {
+        $Win32Utils = Add-Type -MemberDefinition $MemberDefinition -Name "Win32Utils" -Namespace "Win32" -PassThru -ErrorAction SilentlyContinue
+    } catch {}
+}
+if ($Win32Utils) {
+    $Hwnd = $Win32Utils::GetConsoleWindow()
+    if ($Hwnd -ne [IntPtr]::Zero) {
+        $null = $Win32Utils::ShowWindow($Hwnd, 0) # 0 = SW_HIDE
+    }
+}
+
 Start-Transcript -Path '__USER_LOG_PATH__' -Append
 try {
     function Invoke-WingetSilent {
@@ -224,12 +262,15 @@ $UserScriptContent = $UserScriptContent.Replace('__INSTALL_APP__', $installapp)
 
 $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
 
+# Create VBS launcher to run powershell completely hidden, preventing console flash
+$VbsContent = "Set WshShell = CreateObject(`"WScript.Shell`")`r`nWshShell.Run `"powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"`"$UserScriptPath`"`"`", 0, True"
+$VbsContent | Out-File -FilePath $UserLauncherPath -Encoding ASCII
+
     try {
-        # 3. Register task to run AS the logged-on user (Interactive) using powershell.exe directly with Hidden window style
-        # This completely bypasses the need for wscript.exe and .vbs launchers, avoiding corporate Windows Script Host disabling policies
-        $PowershellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-        if (-not (Test-Path $PowershellPath)) { $PowershellPath = "powershell.exe" }
-        $Action = New-ScheduledTaskAction -Execute $PowershellPath -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$UserScriptPath`""
+        # 3. Register task to run AS the logged-on user (Interactive) using wscript.exe with VBS launcher to ensure 100% hidden execution
+        $WscriptPath = Join-Path $env:SystemRoot "System32\wscript.exe"
+        if (-not (Test-Path $WscriptPath)) { $WscriptPath = "wscript.exe" }
+        $Action = New-ScheduledTaskAction -Execute $WscriptPath -Argument "//B //Nologo `"$UserLauncherPath`""
         
         $Principal = New-ScheduledTaskPrincipal -UserId $UserSid -LogonType Interactive
         $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
@@ -301,6 +342,7 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
             Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
         }
         if (Test-Path $UserScriptPath) { Remove-Item -Path $UserScriptPath -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $UserLauncherPath) { Remove-Item -Path $UserLauncherPath -Force -ErrorAction SilentlyContinue }
     }
 } # End of User Loop
 
