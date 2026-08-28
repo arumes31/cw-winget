@@ -1,15 +1,14 @@
 # 2_AddLocalAdmin.ps1 - ConnectWise Automate compatible
-# Input/Output: Step|Username|Password|Result
+# Input/Output: Step|Username|Result
 
 $State = '@state@'
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
-    Write-Error "Invalid state string. Expected Step|Username|Password|Result"
+    Write-Error "Invalid state string. Expected Step|Username|Result"
     exit 1
 }
 $Username = $Parts[1].Trim()
-$Password = $Parts[2].Trim()
 
 try {
     # Robust localized Administrators group lookup
@@ -36,12 +35,12 @@ try {
         }
         
         if ($alreadyAdmin) {
-            Write-Output "2|${Username}|${Password}|AlreadyAdmin"
+            Write-Output "2|${Username}|AlreadyAdmin"
             return
         }
         
         Add-LocalGroupMember -Group $AdminGroup -Member $Username -ErrorAction Stop
-        Write-Output "2|${Username}|${Password}|AddedToAdmin"
+        Write-Output "2|${Username}|AddedToAdmin"
     }
     catch {
         # Tier 2: ADSI WinNT provider fallback
@@ -67,13 +66,13 @@ try {
             }
             
             if ($isMember) {
-                Write-Output "2|${Username}|${Password}|AlreadyAdmin"
+                Write-Output "2|${Username}|AlreadyAdmin"
                 return
             }
             
             # Add to group using ADSI
             $Group.Add("WinNT://$env:COMPUTERNAME/$Username")
-            Write-Output "2|${Username}|${Password}|AddedToAdmin"
+            Write-Output "2|${Username}|AddedToAdmin"
         }
         catch {
             # Tier 3: Legacy net localgroup fallback
@@ -86,13 +85,13 @@ try {
                 }
                 
                 if ($MemberLine) {
-                    Write-Output "2|${Username}|${Password}|AlreadyAdmin"
+                    Write-Output "2|${Username}|AlreadyAdmin"
                     return
                 }
                 
                 $Proc = Start-Process net.exe -ArgumentList "localgroup `"$AdminGroup`" `"$Username`" /add" -NoNewWindow -PassThru -Wait
                 if ($Proc.ExitCode -ne 0) { throw "net localgroup add failed with code $($Proc.ExitCode)" }
-                Write-Output "2|${Username}|${Password}|AddedToAdmin"
+                Write-Output "2|${Username}|AddedToAdmin"
             }
             catch {
                 throw "Failed to add user ${Username} to ${AdminGroup} via local accounts, ADSI, or net localgroup: $($_.Exception.Message)"
@@ -107,7 +106,7 @@ catch {
         $GroupInfo = net localgroup "$AdminGroup" 2>&1
         $MemberLine = $GroupInfo | Where-Object { $_ -match "(^|[\s\\])$Username(\s|$)" }
         if ($MemberLine) {
-            Write-Output "2|${Username}|${Password}|AlreadyAdmin"
+            Write-Output "2|${Username}|AlreadyAdmin"
             return
         }
     } catch {}

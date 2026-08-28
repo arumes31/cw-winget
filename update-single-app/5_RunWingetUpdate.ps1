@@ -1,5 +1,5 @@
 # 5_RunWingetUpdate.ps1 - ConnectWise Automate compatible
-# Input/Output: Step|Username|Password|Result|WingetLog
+# Input/Output: Step|Username|Result|WingetLog
 
 $State = @'
 @state@
@@ -8,11 +8,92 @@ $installapp = '@installapp@'
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
-    Write-Error "Invalid state string. Expected Step|Username|Password|Result"
+    Write-Error "Invalid state string. Expected Step|Username|Result"
     exit 1
 }
 $Username = $Parts[1].Trim()
-$Password = $Parts[2].Trim()
+
+function Get-CryptographicIndex {
+    param([Parameter(Mandatory)][int]$UpperBound)
+
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $bytes = New-Object byte[] 1
+        $limit = 256 - (256 % $UpperBound)
+        do {
+            $generator.GetBytes($bytes)
+            $value = [int]$bytes[0]
+        } while ($value -ge $limit)
+        return $value % $UpperBound
+    }
+    finally {
+        $generator.Dispose()
+    }
+}
+
+function New-CryptographicPassword {
+    $sets = @("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz", "0123456789", "!@#$%^&*_-+=")
+    $characters = New-Object System.Collections.Generic.List[char]
+    foreach ($set in $sets) {
+        [void]$characters.Add($set[(Get-CryptographicIndex -UpperBound $set.Length)])
+    }
+    $allCharacters = $sets -join ""
+    while ($characters.Count -lt 32) {
+        [void]$characters.Add($allCharacters[(Get-CryptographicIndex -UpperBound $allCharacters.Length)])
+    }
+    for ($i = $characters.Count - 1; $i -gt 0; $i--) {
+        $j = Get-CryptographicIndex -UpperBound ($i + 1)
+        $temporary = $characters[$i]
+        $characters[$i] = $characters[$j]
+        $characters[$j] = $temporary
+    }
+    return -join $characters
+}
+
+function Set-TemporaryAccountPassword {
+    param([Parameter(Mandatory)][string]$PlaintextPassword)
+
+    try {
+        $securePassword = New-Object System.Security.SecureString
+        foreach ($character in $PlaintextPassword.ToCharArray()) { $securePassword.AppendChar($character) }
+        $securePassword.MakeReadOnly()
+        Set-LocalUser -Name $Username -Password $securePassword -ErrorAction Stop
+    }
+    catch {
+        $user = [ADSI]"WinNT://$env:COMPUTERNAME/$Username,user"
+        $user.SetPassword($PlaintextPassword)
+        $user.SetInfo()
+    }
+}
+
+function Set-TemporaryAccountEnabled {
+    param([Parameter(Mandatory)][bool]$Enabled)
+
+    try {
+        if ($Enabled) {
+            Enable-LocalUser -Name $Username -ErrorAction Stop
+        }
+        else {
+            Disable-LocalUser -Name $Username -ErrorAction Stop
+        }
+    }
+    catch {
+        try {
+            $user = [ADSI]"WinNT://$env:COMPUTERNAME/$Username,user"
+            $flags = $user.Value("UserFlags")
+            if ($Enabled) { $flags = $flags -band (-bnot 2) } else { $flags = $flags -bor 2 }
+            $user.Put("UserFlags", $flags)
+            $user.SetInfo()
+        }
+        catch {
+            $activeFlag = if ($Enabled) { "/active:yes" } else { "/active:no" }
+            $process = Start-Process net.exe -ArgumentList "user `"$Username`" $activeFlag" -NoNewWindow -PassThru -Wait
+            if ($process.ExitCode -ne 0) {
+                throw "net user $activeFlag failed with code $($process.ExitCode)"
+            }
+        }
+    }
+}
 
 Write-Host "DEBUG: Outer installapp value: '$installapp'"
 
@@ -21,7 +102,7 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     Write-Host "Elevating setup process..."
 }
 
-$TaskName = "TempWingetTask_$(Get-Random)"
+$TaskName = "TempWingetTask_$([Guid]::NewGuid().ToString('N'))"
 $WorkDir = "C:\eworx"
 if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
 
@@ -46,7 +127,7 @@ catch {
 }
 
 $LogPath = Join-Path -Path $WorkDir -ChildPath "winget-log.txt"
-$TempScriptPath = Join-Path -Path $WorkDir -ChildPath "TempWingetUpdate_$(Get-Random).ps1"
+$TempScriptPath = Join-Path -Path $WorkDir -ChildPath "TempWingetUpdate_$([Guid]::NewGuid().ToString('N')).ps1"
 
 if (Test-Path $LogPath) { Remove-Item $LogPath -Force }
 
@@ -224,6 +305,10 @@ try {
 $UpdateScriptContent | Out-File -FilePath $TempScriptPath -Encoding UTF8
 
 try {
+    $Password = New-CryptographicPassword
+    Set-TemporaryAccountPassword -PlaintextPassword $Password
+    Set-TemporaryAccountEnabled -Enabled $true
+
     $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$TempScriptPath`""
     $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
@@ -294,7 +379,7 @@ try {
         exit 1
     }
     
-    Write-Output "5|${Username}|${Password}|WingetUpdated|${WingetLog}"
+    Write-Output "5|${Username}|WingetUpdated|${WingetLog}"
 }
 catch {
     Write-Error "Failed to run Winget update: $($_.Exception.Message)"
@@ -305,4 +390,7 @@ finally {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     }
     if (Test-Path $TempScriptPath) { Remove-Item -Path $TempScriptPath -Force -ErrorAction SilentlyContinue }
+    try { Set-TemporaryAccountEnabled -Enabled $false } catch { Write-Warning "Failed to disable temporary account: $($_.Exception.Message)" }
+    try { Set-TemporaryAccountPassword -PlaintextPassword (New-CryptographicPassword) } catch { Write-Warning "Failed to rotate temporary account credential: $($_.Exception.Message)" }
+    $Password = $null
 }

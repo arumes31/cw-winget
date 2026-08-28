@@ -1,56 +1,73 @@
-param(
-    [string]$State = ""
-)
-
 # 1_CreateTempAdmin.ps1 - ConnectWise Automate compatible
-# Outputs: Step|Username|Password|Result
+# Output: Step|Username|Result. Credentials never leave this process.
 
 # Load module silently
 Import-Module Microsoft.PowerShell.LocalAccounts -ErrorAction SilentlyContinue
 
 $Username = "TempAutomateAdmin"
 
-$PasswordLength = 16
+$PasswordLength = 32
 $CharacterSets = @(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
-    "01234456789"
-    "!@#$%^&*()_+"
+    "0123456789"
+    "!@#$%^&*_-+="
 )
 
-$Password = ""
-foreach ($set in $CharacterSets) {
-    $Password += $set[(Get-Random -Maximum $set.Length)]
+function Get-CryptographicIndex {
+    param([Parameter(Mandatory)][int]$UpperBound)
+
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $bytes = New-Object byte[] 1
+        $limit = 256 - (256 % $UpperBound)
+        do {
+            $generator.GetBytes($bytes)
+            $value = [int]$bytes[0]
+        } while ($value -ge $limit)
+        return $value % $UpperBound
+    }
+    finally {
+        $generator.Dispose()
+    }
 }
 
-$AllChars = ($CharacterSets -join "")
-for ($i = 4; $i -lt $PasswordLength; $i++) {
-    $Password += $AllChars[(Get-Random -Maximum $AllChars.Length)]
+function New-CryptographicPassword {
+    $characters = New-Object System.Collections.Generic.List[char]
+    foreach ($set in $CharacterSets) {
+        [void]$characters.Add($set[(Get-CryptographicIndex -UpperBound $set.Length)])
+    }
+    $allCharacters = $CharacterSets -join ""
+    while ($characters.Count -lt $PasswordLength) {
+        [void]$characters.Add($allCharacters[(Get-CryptographicIndex -UpperBound $allCharacters.Length)])
+    }
+    for ($i = $characters.Count - 1; $i -gt 0; $i--) {
+        $j = Get-CryptographicIndex -UpperBound ($i + 1)
+        $temporary = $characters[$i]
+        $characters[$i] = $characters[$j]
+        $characters[$j] = $temporary
+    }
+    return -join $characters
 }
 
-# Shuffle
-$PasswordArray = $Password.ToCharArray()
-for ($i = $PasswordArray.Length - 1; $i -gt 0; $i--) {
-    $j = Get-Random -Maximum ($i + 1)
-    $temp = $PasswordArray[$i]
-    $PasswordArray[$i] = $PasswordArray[$j]
-    $PasswordArray[$j] = $temp
-}
-$Password = -join $PasswordArray
+$Password = New-CryptographicPassword
 
 try {
-    $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+    $SecurePassword = New-Object System.Security.SecureString
+    foreach ($character in $Password.ToCharArray()) { $SecurePassword.AppendChar($character) }
+    $SecurePassword.MakeReadOnly()
     $Result = $null
     
     # Tier 1: Modern PowerShell local user cmdlets
     try {
         $ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
         if ($ExistingUser) {
+            if ($ExistingUser.Enabled) { Disable-LocalUser -Name $Username -ErrorAction Stop }
             Set-LocalUser -Name $Username -Password $SecurePassword -ErrorAction Stop
             $Result = "PasswordUpdated"
         }
         else {
-            New-LocalUser -Name $Username -Password $SecurePassword -Description "Temporary Automation Admin" -FullName "Temp Automate Admin" -ErrorAction Stop | Out-Null
+            New-LocalUser -Name $Username -Password $SecurePassword -Description "Temporary Automation Admin" -FullName "Temp Automate Admin" -Disabled -ErrorAction Stop | Out-Null
             $Result = "UserCreated"
         }
     }
@@ -67,6 +84,9 @@ try {
             }
 
             if ($UserExists) {
+                $UserFlags = $User.Value("UserFlags")
+                $User.Put("UserFlags", ($UserFlags -bor 2))
+                $User.SetInfo()
                 $User.SetPassword($Password)
                 $User.SetInfo()
                 $Result = "PasswordUpdated"
@@ -76,36 +96,30 @@ try {
                 $NewUser.SetPassword($Password)
                 $NewUser.Put("Description", "Temporary Automation Admin")
                 $NewUser.Put("FullName", "Temp Automate Admin")
+                $NewUser.Put("UserFlags", 2)
                 $NewUser.SetInfo()
                 $Result = "UserCreated"
             }
         }
         catch {
-            # Tier 3: Legacy command-line net user fallback
-            try {
-                net user $Username > $null 2>&1
-                if ($LASTEXITCODE -eq 0) {
-                    # User exists, update password
-                    $Proc = Start-Process net.exe -ArgumentList "user `"$Username`" `"$Password`"" -NoNewWindow -PassThru -Wait
-                    if ($Proc.ExitCode -ne 0) { throw "net user password update failed" }
-                    $Result = "PasswordUpdated"
-                }
-                else {
-                    # User does not exist, create
-                    $Proc = Start-Process net.exe -ArgumentList "user `"$Username`" `"$Password`" /add /y" -NoNewWindow -PassThru -Wait
-                    if ($Proc.ExitCode -ne 0) { throw "net user add failed" }
-                    $Result = "UserCreated"
-                }
-            }
-            catch {
-                throw "Failed to manage user ${Username} via local accounts, ADSI, or net user: $($_.Exception.Message)"
-            }
+            throw "Failed to manage user ${Username} without exposing its credential: $($_.Exception.Message)"
         }
     }
-    
-    # Final Output: Step|Username|Password|Result
-    # Strictly one line of output for state capture
-    Write-Output "1|${Username}|${Password}|${Result}"
+
+    # Keep the account unusable between independently executed CWA steps.
+    try {
+        Disable-LocalUser -Name $Username -ErrorAction Stop
+    }
+    catch {
+        $User = [ADSI]"WinNT://$env:COMPUTERNAME/$Username,user"
+        $UserFlags = $User.Value("UserFlags")
+        $User.Put("UserFlags", ($UserFlags -bor 2))
+        $User.SetInfo()
+    }
+
+    $SecurePassword.Dispose()
+    $Password = $null
+    Write-Output "1|${Username}|${Result}"
 }
 catch {
     Write-Error "Failed to manage user ${Username}: $($_.Exception.Message)"
