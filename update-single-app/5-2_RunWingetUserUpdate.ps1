@@ -1,6 +1,6 @@
 # 5-2_RunWingetUserUpdate.ps1 - ConnectWise Automate compatible
 # Purpose: Update User-scope apps for the logged-on user without UAC prompts.
-# Input/Output: Step|Username|Password|Result|UserWingetLog
+# Input/Output: Step|Username|Result|UserWingetLog
 
 $State = @'
 @state@
@@ -13,7 +13,6 @@ if ($Parts.Count -lt 3) {
     exit 1
 }
 $AdminUser = $Parts[1].Trim()
-$AdminPass = $Parts[2].Trim()
 
 # 1. Identify all logged-on interactive users (Console + RDP)
 $ExplorerProcesses = Get-CimInstance Win32_Process -Filter "Name='explorer.exe'"
@@ -49,7 +48,7 @@ foreach ($Proc in $ExplorerProcesses) {
 $ActiveUsers = $ActiveUsers | Select-Object -Unique
 
 if ($ActiveUsers.Count -eq 0) {
-    Write-Output "5-2|${AdminUser}|${AdminPass}|NoUserLoggedOn|Skipping user-scope updates."
+    Write-Output "5-2|${AdminUser}|NoUserLoggedOn|Skipping user-scope updates."
     exit 0
 }
 
@@ -58,12 +57,12 @@ $GlobalLogSummary = @()
 foreach ($LoggedOnUser in $ActiveUsers) {
     Write-Host "Processing updates for session: $LoggedOnUser"
 
-$TaskName = "UserWingetUpdate_$(Get-Random)"
+$TaskName = "UserWingetUpdate_$([Guid]::NewGuid().ToString('N'))"
 $WorkDir = "C:\eworx"
 if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
 
 $UserLogPath = Join-Path -Path $WorkDir -ChildPath "user-winget-log.txt"
-$UserScriptPath = Join-Path -Path $WorkDir -ChildPath "UserWingetUpdate_$(Get-Random).ps1"
+$UserScriptPath = Join-Path -Path $WorkDir -ChildPath "UserWingetUpdate_$([Guid]::NewGuid().ToString('N')).ps1"
 
 if (Test-Path $UserLogPath) { Remove-Item $UserLogPath -Force }
 
@@ -237,7 +236,7 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
 if ($GlobalLogSummary.Count -gt 0) {
     $FinalUserLog = $GlobalLogSummary -join " | "
     if ($FinalUserLog.Length -gt 2000) { $FinalUserLog = $FinalUserLog.Substring(0, 2000) + "..." }
-    Write-Output "5-2|${AdminUser}|${AdminPass}|UserAppsUpdated|${FinalUserLog}"
+    Write-Output "5-2|${AdminUser}|UserAppsUpdated|${FinalUserLog}"
 } else {
-    Write-Output "5-2|${AdminUser}|${AdminPass}|NoUpdatesRun|Could not generate logs for users."
+    Write-Output "5-2|${AdminUser}|NoUpdatesRun|Could not generate logs for users."
 }

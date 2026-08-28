@@ -1,70 +1,64 @@
-# Run-WingetAutomated.ps1 - Master Simulation Script (PowerShell 5.1)
-# Simulated wrapper for ConnectWise Automate workflow
+# Run-WingetAutomated.ps1 - local simulation of the ConnectWise Automate workflow.
 
-$ScriptsDir = Get-Location
+$ScriptsDir = $PSScriptRoot
 $WingetState = ""
+$InstallApp = "Google.Chrome"
 
 function Invoke-ScriptWithState {
-    param($ScriptFile, $CurrentState, $InstallApp = "")
-    
-    $Content = Get-Content (Join-Path $ScriptsDir $ScriptFile) -Raw
-    # Simulate @state@ injection using single quotes for literal safety
-    $InjectedContent = $Content.Replace("'@state@'", "'$CurrentState'")
-    
-    if (-not [string]::IsNullOrWhiteSpace($InstallApp)) {
-        $InjectedContent = $InjectedContent.Replace("'@installapp@'", "'$InstallApp'")
+    param(
+        [Parameter(Mandatory)][string]$ScriptFile,
+        [Parameter(Mandatory)][string]$CurrentState,
+        [string]$Application = ""
+    )
+
+    $content = Get-Content (Join-Path $ScriptsDir $ScriptFile) -Raw
+    $injectedContent = $content.Replace("'@state@'", "'$CurrentState'")
+    if (-not [string]::IsNullOrWhiteSpace($Application)) {
+        $injectedContent = $injectedContent.Replace("'@installapp@'", "'$Application'")
     }
-    
-    $TempFile = Join-Path $env:TEMP "Simulate_$($ScriptFile)"
-    $InjectedContent | Out-File $TempFile -Encoding UTF8
-    
+    $tempFile = Join-Path $env:TEMP "cw-winget-$([Guid]::NewGuid().ToString('N')).ps1"
+    $injectedContent | Out-File $tempFile -Encoding UTF8
     try {
-        $Result = powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $TempFile -ErrorAction Stop
-        if ($LASTEXITCODE -ne 0) { throw "Script failed with exit code $LASTEXITCODE" }
-        return $Result
+        $result = & powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $tempFile
+        if ($LASTEXITCODE -ne 0) { throw "$ScriptFile failed with exit code $LASTEXITCODE" }
+        return $result
     }
     finally {
-        if (Test-Path $TempFile) { Remove-Item $TempFile -Force }
+        if (Test-Path $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue }
     }
 }
 
 Write-Host "--- Starting Winget Automated Update Simulation ---" -ForegroundColor Cyan
+try {
+    Write-Host "Step 1: Create disabled temporary admin..."
+    $WingetState = & powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File (Join-Path $ScriptsDir "1_CreateTempAdmin.ps1")
+    if ($LASTEXITCODE -ne 0) { throw "Step 1 failed with exit code $LASTEXITCODE" }
 
-# Step 1: Create/Update Temp Admin
-Write-Host "Step 1: Create/Update Temp Admin..."
-# Step 1 is strictly one line now
-$WingetState = powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File (Join-Path $ScriptsDir "1_CreateTempAdmin.ps1")
-if ($LASTEXITCODE -ne 0) { Write-Error "Step 1 Failed"; exit 1 }
-Write-Host "Captured State: $WingetState"
+    Write-Host "Step 2: Add to Administrators..."
+    $WingetState = Invoke-ScriptWithState -ScriptFile "2_AddLocalAdmin.ps1" -CurrentState $WingetState
 
-# Step 2: Add to Administrators
-Write-Host "Step 2: Add to Administrators..."
-$WingetState = Invoke-ScriptWithState "2_AddLocalAdmin.ps1" $WingetState
-Write-Host "Captured State: $WingetState"
+    Write-Host "Step 3: Grant SeBatchLogonRight..."
+    $WingetState = Invoke-ScriptWithState -ScriptFile "3_GrantLogonAsBatch.ps1" -CurrentState $WingetState
 
-# Step 3: Grant Logon As Batch
-Write-Host "Step 3: Grant SeBatchLogonRight..."
-$WingetState = Invoke-ScriptWithState "3_GrantLogonAsBatch.ps1" $WingetState
-Write-Host "Captured State: $WingetState"
+    Write-Host "Step 4: Verify the account remains disabled..."
+    $WingetState = Invoke-ScriptWithState -ScriptFile "4_EnableAccount.ps1" -CurrentState $WingetState
 
-# Step 4: Enable Account
-Write-Host "Step 4: Enable Account..."
-$WingetState = Invoke-ScriptWithState "4_EnableAccount.ps1" $WingetState
-Write-Host "Captured State: $WingetState"
+    Write-Host "Step 5: Run machine-scope Winget update..."
+    $WingetState = Invoke-ScriptWithState -ScriptFile "5_RunWingetUpdate.ps1" -CurrentState $WingetState -Application $InstallApp
 
-# Step 5: Run Winget Update (Requires Elevation)
-Write-Host "Step 5: Run Winget Update (Wait for background task)..."
-$WingetState = Invoke-ScriptWithState "5_RunWingetUpdate.ps1" $WingetState "Google.Chrome"
-Write-Host "Captured State (Summary): $($WingetState.Substring(0, [Math]::Min(100, $WingetState.Length)))..."
+    Write-Host "Step 5-2: Run user-scope Winget update..."
+    $WingetState = Invoke-ScriptWithState -ScriptFile "5-2_RunWingetUserUpdate.ps1" -CurrentState $WingetState -Application $InstallApp
 
-# Step 5-2: Run Winget User Update (Interactive context)
-Write-Host "Step 5-2: Run Winget User Update (Interactive context)..."
-$WingetState = Invoke-ScriptWithState "5-2_RunWingetUserUpdate.ps1" $WingetState "Google.Chrome"
-Write-Host "Captured State (Summary): $($WingetState.Substring(0, [Math]::Min(100, $WingetState.Length)))..."
-
-# Step 6: Disable Account
-Write-Host "Step 6: Disable Account..."
-$FinalState = Invoke-ScriptWithState "6_DisableTempAdmin.ps1" $WingetState
-Write-Host "Final Result: $FinalState"
-
-Write-Host "--- Simulation Completed ---" -ForegroundColor Green
+    Write-Host "--- Simulation Completed ---" -ForegroundColor Green
+}
+finally {
+    # Use a fixed password-free state so cleanup still runs when any prior step failed.
+    $cleanupState = "6|TempAutomateAdmin|EmergencyCleanup"
+    try {
+        $cleanupResult = Invoke-ScriptWithState -ScriptFile "6_DisableTempAdmin.ps1" -CurrentState $cleanupState
+        Write-Host "Cleanup result: $cleanupResult"
+    }
+    catch {
+        Write-Error "Emergency cleanup failed: $($_.Exception.Message)"
+    }
+}

@@ -1,12 +1,11 @@
 # <p align="center"><img src="project_logo.png" alt="ConnectWise Automate Winget Wrapper Logo" width="120" height="120" /><br>ConnectWise Automate WinGet Wrapper</p>
 
 [![PowerShell 5.1](https://img.shields.io/badge/PowerShell-5.1-blue.svg?style=flat-square)](https://docs.microsoft.com/en-us/powershell/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-lightgrey.svg?style=flat-square)](https://www.microsoft.com/windows)
 
 A robust, enterprise-grade wrapper designed to integrate **Windows Package Manager (WinGet)** with **ConnectWise Automate (CWA)**. 
 
-Because ConnectWise Automate scripts execute under the **SYSTEM** security context, native WinGet commands fail due to the lack of an interactive user profile. This wrapper solves the limitation by creating a temporary, high-entropy administrative user, executing WinGet via a dynamically cleaned Scheduled Task, and streaming real-time sanitised logs back to ConnectWise Automate.
+Because ConnectWise Automate scripts execute under the **SYSTEM** security context, native WinGet commands fail due to the lack of an interactive user profile. This wrapper solves the limitation by creating a temporary administrative user, executing WinGet via a dynamically cleaned Scheduled Task, and streaming real-time sanitised logs back to ConnectWise Automate. Its credential comes from the operating system cryptographic random-number generator, exists only inside the machine-update process, and is never returned to ConnectWise or passed to a child-process command line.
 
 ---
 
@@ -39,44 +38,45 @@ The repository is organized into two distinct production workflows:
 
 ## 🛠️ Architecture & Script Sequence
 
-To bypass the SYSTEM profile restriction securely, the wrapper executes in a transaction-like sequence of steps, passing state seamlessly using a delimited state token: 
+To bypass the SYSTEM profile restriction securely, the wrapper executes in a transaction-like sequence of steps. It passes only non-secret metadata using a delimited state token:
 
-`Step|Username|Password|Result[|Logs]`
+`Step|Username|Result[|SanitizedLogs]`
 
 ```mermaid
 graph TD
     A[CWA Script Start] --> B[1_CreateTempAdmin.ps1]
-    B -->|Generates random creds| C[2_AddLocalAdmin.ps1]
+    B -->|Creates disabled account| C[2_AddLocalAdmin.ps1]
     C -->|Grants Local Admin privileges| D[3_GrantLogonAsBatch.ps1]
-    D -->|Enables scheduled task execution| E[4_EnableAccount.ps1]
-    E -->|Unlocks temp account| F[5_RunWingetUpdate.ps1]
+    D -->|Prepares disabled account| E[4_EnableAccount.ps1]
+    E -->|Uses in-memory credential| F[5_RunWingetUpdate.ps1]
     F -->|Executes WinGet Scheduled Task| G[5-2_RunWingetUserUpdate.ps1]
     G -->|Executes User-Scope Scheduled Tasks| H[6_DisableTempAdmin.ps1]
     H -->|Disables account & locks credentials| I[CWA Script End]
 ```
 
 ### Script Execution Roles:
-1. **`1_CreateTempAdmin.ps1`**: Generates a high-entropy, 16-character randomized password. Creates the local user account `TempAutomateAdmin`.
+1. **`1_CreateTempAdmin.ps1`**: Creates or rotates `TempAutomateAdmin` with a 32-character cryptographic password, then ensures the account is disabled. The password never leaves the process.
 2. **`2_AddLocalAdmin.ps1`**: Adds the user to the local Administrators group using language-agnostic group SIDs.
 3. **`3_GrantLogonAsBatch.ps1`**: Updates local security policy (`secedit`) to grant the account `SeBatchLogonRight` permissions.
-4. **`4_EnableAccount.ps1`**: Enables the account so it is ready for task scheduling.
+4. **`4_EnableAccount.ps1`**: Compatibility step that verifies the account exists and remains disabled between independently executed CWA steps.
 5. **`5_RunWingetUpdate.ps1`**: 
-   - Registers and executes a transient Scheduled Task running as `TempAutomateAdmin` with elevated privileges.
+   - Rotates the password in memory, enables the account, and registers a transient elevated Scheduled Task.
+   - Always unregisters the task, disables the account, and rotates the credential again—even on timeout or failure.
    - Cleans the WinGet cache, resets source repositories, pulls updates, parses available updates, applies exclusions, and runs upgrades.
 6. **`5-2_RunWingetUserUpdate.ps1`**: 
    - Scans active interactive sessions (excluding system service accounts).
    - Dynamically registers user-level Scheduled Tasks running in the interactive user contexts to update user-profile scoped apps without triggering UAC prompts.
-7. **`6_DisableTempAdmin.ps1`**: Disables `TempAutomateAdmin` immediately, locks out the credentials, and cleans up temporary files.
+7. **`6_DisableTempAdmin.ps1`**: Defense-in-depth cleanup that disables `TempAutomateAdmin` even if a prior orchestration step was interrupted.
 
 ---
 
 ## 🛡️ Advanced Enterprise Features
 
-### 🔌 Three-Tier Robust Account Management Fallback
-To solve the notorious fragility of the PowerShell `Microsoft.PowerShell.LocalAccounts` module under the **SYSTEM** context (which frequently throws database state/SAM errors like `0xC000000C` / `3221226252`), all account management operations (creation, group assignment, enabling, disabling) implement a resilient, three-tier fallback architecture:
+### 🔌 Robust Account Management Fallback
+To solve the fragility of the PowerShell `Microsoft.PowerShell.LocalAccounts` module under the **SYSTEM** context, account operations use layered fallbacks while keeping credentials away from observable command lines:
 1. **Tier 1 (Modern Cmdlets)**: Utilizes native PowerShell cmdlets (`Get-LocalUser`, `New-LocalUser`, `Enable-LocalUser`, etc.) for modern, high-level execution.
 2. **Tier 2 (ADSI WinNT Provider)**: Bypasses native wrappers to invoke .NET Active Directory Service Interfaces (`[ADSI]"WinNT://..."`) directly at the operating system API level, bypassing SAM-related cmdlet bugs.
-3. **Tier 3 (Legacy Win32 Binaries)**: Employs standard legacy `net.exe` command-line utilities (`net user`, `net localgroup`) as a guaranteed fail-safe execution tier.
+3. **Tier 3 (Non-secret operations only)**: Legacy `net.exe` is retained for group membership and enable/disable compatibility. Passwords are never supplied to it because command-line arguments are observable by other local processes.
 
 ### 🌎 Global & Non-English OS Support
 Standard scripts often fail on non-English Windows (e.g., German, Spanish, French) because system terms are localized. This wrapper uses deep Windows API compatibility:
@@ -131,7 +131,7 @@ Replicate the script execution sequence. For each step, use CWA's **Execute Powe
    * **Parameters / Injected State**: Set state parameter using `'%WingetState%'`
    * **Run Context**: SYSTEM
    * **Store Output In**: `%WingetState%`
-4. **Step 4: Enable Account**
+4. **Step 4: Prepare Disabled Account**
    * **Script File**: `4_EnableAccount.ps1`
    * **Parameters / Injected State**: Set state parameter using `'%WingetState%'`
    * **Run Context**: SYSTEM

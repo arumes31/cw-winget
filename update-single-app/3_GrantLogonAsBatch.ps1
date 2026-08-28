@@ -1,15 +1,14 @@
 # 3_GrantLogonAsBatch.ps1 - ConnectWise Automate compatible
-# Input/Output: Step|Username|Password|Result
+# Input/Output: Step|Username|Result
 
 $State = '@state@'
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
-    Write-Error "Invalid state string. Expected Step|Username|Password|Result"
+    Write-Error "Invalid state string. Expected Step|Username|Result"
     exit 1
 }
 $Username = $Parts[1].Trim()
-$Password = $Parts[2].Trim()
 
 $TmpFile = Join-Path $env:TEMP "secedit_export.inf"
 $CfgFile = Join-Path $env:TEMP "secedit_import.inf"
@@ -27,7 +26,7 @@ try {
     }
 
     if ($IsAlreadyGranted) {
-        Write-Output "3|${Username}|${Password}|BatchLogonExists"
+        Write-Output "3|${Username}|BatchLogonExists"
         return
     }
 
@@ -50,7 +49,7 @@ try {
     secedit /configure /db $env:windir\security\local.sdb /cfg $CfgFile /areas USER_RIGHTS | Out-Null
     gpupdate /force | Out-Null
     
-    Write-Output "3|${Username}|${Password}|BatchLogonGranted"
+    Write-Output "3|${Username}|BatchLogonGranted"
 }
 catch {
     Write-Error "Failed to grant SeBatchLogonRight: $($_.Exception.Message)"
