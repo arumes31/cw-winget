@@ -11,6 +11,12 @@ if ($Parts.Count -lt 3) {
 $Username = $Parts[1].Trim()
 $Password = $Parts[2].Trim()
 
+# Only ever operate on the per-run account created by 1_CreateTempAdmin.ps1
+if ($Username -notmatch "^TempWinget_[a-z0-9]{8}$") {
+    Write-Error "Refusing to operate on unexpected account name: $Username"
+    exit 1
+}
+
 try {
     # Robust localized Administrators group lookup
     $AdminGroup = (Get-LocalGroup -SID "S-1-5-32-544" -ErrorAction SilentlyContinue).Name
