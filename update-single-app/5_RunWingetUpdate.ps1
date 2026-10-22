@@ -1,10 +1,12 @@
 # 5_RunWingetUpdate.ps1 - ConnectWise Automate compatible
-# Input/Output: Step|Username|Password|Result|WingetLog
+# Input/Output: Step|Username|Password|Result|WingetLog (Password is always "Redacted")
 
 $State = @'
 @state@
 '@.Trim()
-$installapp = '@installapp@'
+$installapp = @'
+@installapp@
+'@.Trim()
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
@@ -12,7 +14,19 @@ if ($Parts.Count -lt 3) {
     exit 1
 }
 $Username = $Parts[1].Trim()
-$Password = $Parts[2].Trim()
+
+# Only ever operate on the per-run account created by 1_CreateTempAdmin.ps1
+if ($Username -notmatch "^TempWinget_[a-z0-9]{8}$") {
+    Write-Error "Refusing to operate on unexpected account name: $Username"
+    exit 1
+}
+
+# Only accept a plain WinGet package ID; anything else could break out of the generated script
+$InstallAppSentinel = "@" + "installapp" + "@"
+if ($installapp -and $installapp -ne $InstallAppSentinel -and $installapp -notmatch '^[A-Za-z0-9][A-Za-z0-9.\-_+]{0,127}$') {
+    Write-Error "Invalid installapp value. Expected a WinGet package ID such as Google.Chrome"
+    exit 1
+}
 
 Write-Host "DEBUG: Outer installapp value: '$installapp'"
 
@@ -21,34 +35,120 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     Write-Host "Elevating setup process..."
 }
 
-$TaskName = "TempWingetTask_$(Get-Random)"
-$WorkDir = "C:\eworx"
-if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
+# Creates a uniquely named working directory that only SYSTEM and Administrators (plus the optional
+# accounts in $ModifyAccounts) can access. The protected ACL is applied atomically at creation time,
+# so standard users can neither pre-create the folder nor tamper with files placed in it.
+function New-ProtectedWorkDir {
+    param([string[]]$ModifyAccounts = @())
 
-# Explicitly grant Edit permission to localized Administrators group (S-1-5-32-544)
-# to ensure Start-Transcript and File operations work within the Scheduled Task
-try {
-    # Robust localized Administrators group lookup
-    $AdminGroup = (Get-LocalGroup -SID "S-1-5-32-544" -ErrorAction SilentlyContinue).Name
-    if (-not $AdminGroup) {
-        $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
-        $Translated = $AdminSid.Translate([System.Security.Principal.NTAccount]).Value
-        $AdminGroup = $Translated.Split('\')[-1]
+    $BaseDir = Join-Path $env:windir "LTSvc"
+    if (-not (Test-Path $BaseDir)) { $BaseDir = $env:ProgramData }
+    $Path = Join-Path $BaseDir ("WingetWork_" + [guid]::NewGuid().ToString("N"))
+    if (Test-Path -LiteralPath $Path) { throw "Working directory $Path already exists" }
+
+    $SystemSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-18")
+    $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+    $Inherit = [System.Security.AccessControl.InheritanceFlags]"ContainerInherit,ObjectInherit"
+    $Propagate = [System.Security.AccessControl.PropagationFlags]::None
+    $Security = New-Object System.Security.AccessControl.DirectorySecurity
+    $Security.SetAccessRuleProtection($true, $false)
+    $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($SystemSid, "FullControl", $Inherit, $Propagate, "Allow")))
+    $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($AdminSid, "FullControl", $Inherit, $Propagate, "Allow")))
+    foreach ($Account in $ModifyAccounts) {
+        $AccountSid = (New-Object System.Security.Principal.NTAccount($Account)).Translate([System.Security.Principal.SecurityIdentifier])
+        $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($AccountSid, "Modify", $Inherit, $Propagate, "Allow")))
     }
-    
-    $Acl = Get-Acl $WorkDir
-    $Ar = New-Object System.Security.AccessControl.FileSystemAccessRule($AdminGroup, "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
-    $Acl.AddAccessRule($Ar)
-    Set-Acl $WorkDir $Acl
+
+    if ($PSVersionTable.PSEdition -eq "Core") {
+        [void][System.IO.FileSystemAclExtensions]::Create((New-Object System.IO.DirectoryInfo($Path)), $Security)
+    }
+    else {
+        [void][System.IO.Directory]::CreateDirectory($Path, $Security)
+    }
+
+    # Defense in depth: fail closed if the folder is not ours or is not empty
+    $Owner = (Get-Acl -LiteralPath $Path).GetOwner([System.Security.Principal.SecurityIdentifier])
+    $CurrentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    if (-not ($Owner.Equals($SystemSid) -or $Owner.Equals($AdminSid) -or $Owner.Equals($CurrentSid))) { throw "Working directory $Path has unexpected owner $Owner" }
+    if (Get-ChildItem -LiteralPath $Path -Force) { throw "Working directory $Path is not empty" }
+    return $Path
+}
+
+$Rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+
+# Unbiased random integer in [0, Maximum) from the cryptographic RNG (rejection sampling)
+function Get-SecureRandomInt {
+    param([int]$Maximum)
+    $Bytes = New-Object byte[] 4
+    $Limit = [uint32]::MaxValue - ([uint32]::MaxValue % $Maximum)
+    do {
+        $Rng.GetBytes($Bytes)
+        $Value = [BitConverter]::ToUInt32($Bytes, 0)
+    } while ($Value -ge $Limit)
+    return [int]($Value % $Maximum)
+}
+
+function New-RandomPassword {
+    param([int]$Length = 24)
+    $CharacterSets = @(
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        'abcdefghijklmnopqrstuvwxyz'
+        '0123456789'
+        '!@#$%^&*()_+'
+    )
+    $PasswordArray = @()
+    foreach ($set in $CharacterSets) {
+        $PasswordArray += $set[(Get-SecureRandomInt $set.Length)]
+    }
+    $AllChars = ($CharacterSets -join "")
+    for ($i = $CharacterSets.Count; $i -lt $Length; $i++) {
+        $PasswordArray += $AllChars[(Get-SecureRandomInt $AllChars.Length)]
+    }
+    # Fisher-Yates shuffle
+    for ($i = $PasswordArray.Count - 1; $i -gt 0; $i--) {
+        $j = Get-SecureRandomInt ($i + 1)
+        $temp = $PasswordArray[$i]
+        $PasswordArray[$i] = $PasswordArray[$j]
+        $PasswordArray[$j] = $temp
+    }
+    return -join $PasswordArray
+}
+
+function Set-TempAdminPassword {
+    param([string]$Name, [string]$NewPassword)
+    try {
+        Set-LocalUser -Name $Name -Password (ConvertTo-SecureString $NewPassword -AsPlainText -Force) -ErrorAction Stop
+    }
+    catch {
+        # ADSI WinNT provider fallback (keeps the password off any process command line)
+        $User = [ADSI]"WinNT://$env:COMPUTERNAME/$Name,user"
+        $User.SetPassword($NewPassword)
+        $User.SetInfo()
+    }
+}
+
+# Scrambles the password and disables the account as soon as the task is done.
+# 6_DisableTempAdmin.ps1 deletes it; this also covers runs where step 6 never executes.
+function Lock-TempAdmin {
+    param([string]$Name)
+    try { Set-TempAdminPassword -Name $Name -NewPassword (New-RandomPassword 24) } catch {}
+    try { Disable-LocalUser -Name $Name -ErrorAction Stop }
+    catch { Start-Process net.exe -ArgumentList "user `"$Name`" /active:no" -NoNewWindow -Wait -ErrorAction SilentlyContinue }
+}
+
+$TaskName = "TempWingetTask_$(Get-Random)"
+# Per-run working folder that only SYSTEM and Administrators can write to. The elevated task runs the
+# generated script from here, so standard users must not be able to replace it or plant links for the log.
+try {
+    $WorkDir = New-ProtectedWorkDir
 }
 catch {
-    Write-Host "Warning: Failed to set ACL on $($WorkDir): $($_.Exception.Message)"
+    Write-Error "Failed to create protected working directory: $($_.Exception.Message)"
+    exit 1
 }
 
 $LogPath = Join-Path -Path $WorkDir -ChildPath "winget-log.txt"
-$TempScriptPath = Join-Path -Path $WorkDir -ChildPath "TempWingetUpdate_$(Get-Random).ps1"
-
-if (Test-Path $LogPath) { Remove-Item $LogPath -Force }
+$TempScriptPath = Join-Path -Path $WorkDir -ChildPath "TempWingetUpdate.ps1"
 
 $UpdateScriptContent = @"
 # Force profile loading variables if they are missing
@@ -77,13 +177,15 @@ try {
     # We execute winget via a child powershell.exe process to bypass Appx alias tracking limitations in Session 0
     function Invoke-WingetCommand {
         param(
-            [string]`$Arguments
+            [string[]]`$Arguments
         )
-        
-        Write-Output "DEBUG: Running process: `$WingetCmd `$Arguments"
-        
+
+        Write-Output "DEBUG: Running process: `$WingetCmd `$(`$Arguments -join ' ')"
+
         try {
-            `$PowershellArgs = "-NoProfile -ExecutionPolicy Bypass -Command & `'$WingetCmd`' `$Arguments"
+            # Every token is passed as a single-quoted literal so package IDs can never be parsed as code
+            `$QuotedArgs = (@(`$WingetCmd) + `$Arguments | ForEach-Object { "'" + (`$_ -replace "'", "''") + "'" }) -join ' '
+            `$PowershellArgs = "-NoProfile -ExecutionPolicy Bypass -Command & `$QuotedArgs"
             `$Proc = Start-Process -FilePath "powershell.exe" -ArgumentList `$PowershellArgs -NoNewWindow -PassThru
             
             `$TimeoutSeconds = 600 # 10 minutes
@@ -130,13 +232,22 @@ try {
         Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe -ErrorAction SilentlyContinue
         
         # 2. Module & Repair (Ensures latest client logic)
-        if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client)) {
+        # Pinned version, installed without marking PSGallery as trusted, imported only if Microsoft-signed
+        `$WinGetClientVersion = [version]'1.29.380'
+        if (-not (Get-Module -ListAvailable Microsoft.WinGet.Client | Where-Object { `$_.Version -eq `$WinGetClientVersion })) {
             Install-PackageProvider -Name 'NuGet' -Force -ErrorAction SilentlyContinue
-            Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-            Install-Module -Name Microsoft.WinGet.Client -Force -Confirm:`$false -Scope CurrentUser -ErrorAction SilentlyContinue
+            Install-Module -Name Microsoft.WinGet.Client -RequiredVersion `$WinGetClientVersion -Repository PSGallery -Force -Confirm:`$false -Scope CurrentUser -ErrorAction SilentlyContinue
         }
-        
-        Import-Module Microsoft.WinGet.Client -ErrorAction SilentlyContinue
+
+        `$WinGetClientModule = Get-Module -ListAvailable Microsoft.WinGet.Client | Where-Object { `$_.Version -eq `$WinGetClientVersion } | Select-Object -First 1
+        if (`$WinGetClientModule) {
+            `$Signature = Get-AuthenticodeSignature -FilePath `$WinGetClientModule.Path
+            if (`$Signature.Status -eq 'Valid' -and `$Signature.SignerCertificate.Subject -like 'CN=Microsoft Corporation,*') {
+                Import-Module `$WinGetClientModule.Path -ErrorAction SilentlyContinue
+            } else {
+                Write-Output "Init Warning: Microsoft.WinGet.Client signature check failed (`$(`$Signature.Status)), module not imported"
+            }
+        }
         if (Get-Command Repair-WinGetPackageManager -ErrorAction SilentlyContinue) {
             Repair-WinGetPackageManager -ErrorAction SilentlyContinue
         }
@@ -205,7 +316,7 @@ try {
         
         if (`$LASTEXITCODE -eq 0) {
             Write-Output "Installing/Updating application: `$installapp"
-            Invoke-WingetCommand "install --id `$installapp --exact --accept-package-agreements --accept-source-agreements --scope machine --force --silent --disable-interactivity"
+            Invoke-WingetCommand @("install", "--id", `$installapp, "--exact", "--accept-package-agreements", "--accept-source-agreements", "--scope", "machine", "--force", "--silent", "--disable-interactivity")
         } else {
             Write-Warning "Application '`$installapp' not found in sources."
         }
@@ -224,6 +335,10 @@ try {
 $UpdateScriptContent | Out-File -FilePath $TempScriptPath -Encoding UTF8
 
 try {
+    # Fresh password generated in-process; it is never written to disk or to the script output
+    $Password = New-RandomPassword 24
+    Set-TempAdminPassword -Name $Username -NewPassword $Password
+
     $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$TempScriptPath`""
     $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
     $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
@@ -294,7 +409,7 @@ try {
         exit 1
     }
     
-    Write-Output "5|${Username}|${Password}|WingetUpdated|${WingetLog}"
+    Write-Output "5|${Username}|Redacted|WingetUpdated|${WingetLog}"
 }
 catch {
     Write-Error "Failed to run Winget update: $($_.Exception.Message)"
@@ -304,5 +419,7 @@ finally {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     }
-    if (Test-Path $TempScriptPath) { Remove-Item -Path $TempScriptPath -Force -ErrorAction SilentlyContinue }
+    Lock-TempAdmin -Name $Username
+    $Password = $null
+    if (Test-Path -LiteralPath $WorkDir) { Remove-Item -LiteralPath $WorkDir -Recurse -Force -ErrorAction SilentlyContinue }
 }

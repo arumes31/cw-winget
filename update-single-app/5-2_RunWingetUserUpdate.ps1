@@ -5,7 +5,9 @@
 $State = @'
 @state@
 '@.Trim()
-$installapp = '@installapp@'
+$installapp = @'
+@installapp@
+'@.Trim()
 
 $Parts = $State.Split('|')
 if ($Parts.Count -lt 3) {
@@ -14,6 +16,52 @@ if ($Parts.Count -lt 3) {
 }
 $AdminUser = $Parts[1].Trim()
 $AdminPass = $Parts[2].Trim()
+
+# Only accept a plain WinGet package ID; anything else could break out of the generated script
+$InstallAppSentinel = "@" + "installapp" + "@"
+if ($installapp -and $installapp -ne $InstallAppSentinel -and $installapp -notmatch '^[A-Za-z0-9][A-Za-z0-9.\-_+]{0,127}$') {
+    Write-Error "Invalid installapp value. Expected a WinGet package ID such as Google.Chrome"
+    exit 1
+}
+
+# Creates a uniquely named working directory that only SYSTEM and Administrators (plus the optional
+# accounts in $ModifyAccounts) can access. The protected ACL is applied atomically at creation time,
+# so standard users can neither pre-create the folder nor tamper with files placed in it.
+function New-ProtectedWorkDir {
+    param([string[]]$ModifyAccounts = @())
+
+    $BaseDir = Join-Path $env:windir "LTSvc"
+    if (-not (Test-Path $BaseDir)) { $BaseDir = $env:ProgramData }
+    $Path = Join-Path $BaseDir ("WingetWork_" + [guid]::NewGuid().ToString("N"))
+    if (Test-Path -LiteralPath $Path) { throw "Working directory $Path already exists" }
+
+    $SystemSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-18")
+    $AdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+    $Inherit = [System.Security.AccessControl.InheritanceFlags]"ContainerInherit,ObjectInherit"
+    $Propagate = [System.Security.AccessControl.PropagationFlags]::None
+    $Security = New-Object System.Security.AccessControl.DirectorySecurity
+    $Security.SetAccessRuleProtection($true, $false)
+    $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($SystemSid, "FullControl", $Inherit, $Propagate, "Allow")))
+    $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($AdminSid, "FullControl", $Inherit, $Propagate, "Allow")))
+    foreach ($Account in $ModifyAccounts) {
+        $AccountSid = (New-Object System.Security.Principal.NTAccount($Account)).Translate([System.Security.Principal.SecurityIdentifier])
+        $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($AccountSid, "Modify", $Inherit, $Propagate, "Allow")))
+    }
+
+    if ($PSVersionTable.PSEdition -eq "Core") {
+        [void][System.IO.FileSystemAclExtensions]::Create((New-Object System.IO.DirectoryInfo($Path)), $Security)
+    }
+    else {
+        [void][System.IO.Directory]::CreateDirectory($Path, $Security)
+    }
+
+    # Defense in depth: fail closed if the folder is not ours or is not empty
+    $Owner = (Get-Acl -LiteralPath $Path).GetOwner([System.Security.Principal.SecurityIdentifier])
+    $CurrentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    if (-not ($Owner.Equals($SystemSid) -or $Owner.Equals($AdminSid) -or $Owner.Equals($CurrentSid))) { throw "Working directory $Path has unexpected owner $Owner" }
+    if (Get-ChildItem -LiteralPath $Path -Force) { throw "Working directory $Path is not empty" }
+    return $Path
+}
 
 # 1. Identify all logged-on interactive users (Console + RDP)
 $ExplorerProcesses = Get-CimInstance Win32_Process -Filter "Name='explorer.exe'"
@@ -24,7 +72,7 @@ foreach ($Proc in $ExplorerProcesses) {
         if ($Owner.ReturnValue -eq 0) {
             $FullUser = "$($Owner.Domain)\$($Owner.User)"
             # Exclude our own TempAdmin
-            if ($FullUser -like "*\TempAutomateAdmin") { continue }
+            if ($Owner.User -like "TempWinget_*" -or $Owner.User -eq "TempAutomateAdmin") { continue }
             
             # Translate to SID to filter out SYSTEM, LOCAL SERVICE, and NETWORK SERVICE language-agnostically
             try {
@@ -59,13 +107,18 @@ foreach ($LoggedOnUser in $ActiveUsers) {
     Write-Host "Processing updates for session: $LoggedOnUser"
 
 $TaskName = "UserWingetUpdate_$(Get-Random)"
-$WorkDir = "C:\eworx"
-if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
+# Per-user, per-run folder writable only by SYSTEM, Administrators and the user the task runs as,
+# so other users on the machine cannot tamper with the script or the log.
+try {
+    $WorkDir = New-ProtectedWorkDir -ModifyAccounts @($LoggedOnUser)
+}
+catch {
+    Write-Warning "Failed to create protected working directory for ${LoggedOnUser}: $($_.Exception.Message)"
+    continue
+}
 
 $UserLogPath = Join-Path -Path $WorkDir -ChildPath "user-winget-log.txt"
-$UserScriptPath = Join-Path -Path $WorkDir -ChildPath "UserWingetUpdate_$(Get-Random).ps1"
-
-if (Test-Path $UserLogPath) { Remove-Item $UserLogPath -Force }
+$UserScriptPath = Join-Path -Path $WorkDir -ChildPath "UserWingetUpdate.ps1"
 
 # 2. Create the script to be run contextually as the user
 $UserScriptContent = @"
@@ -230,7 +283,7 @@ $UserScriptContent | Out-File -FilePath $UserScriptPath -Encoding UTF8
         if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
             Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
         }
-        if (Test-Path $UserScriptPath) { Remove-Item -Path $UserScriptPath -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $WorkDir) { Remove-Item -LiteralPath $WorkDir -Recurse -Force -ErrorAction SilentlyContinue }
     }
 } # End of User Loop
 
