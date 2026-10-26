@@ -8,11 +8,11 @@ function Invoke-ScriptWithState {
     param($ScriptFile, $CurrentState, $InstallApp = "")
     
     $Content = Get-Content (Join-Path $ScriptsDir $ScriptFile) -Raw
-    # Simulate @state@ injection using single quotes for literal safety
-    $InjectedContent = $Content.Replace("'@state@'", "'$CurrentState'")
+    # Simulate CWA @state@ / @installapp@ text substitution (works for quoted strings and here-strings)
+    $InjectedContent = $Content.Replace("@state@", $CurrentState)
     
     if (-not [string]::IsNullOrWhiteSpace($InstallApp)) {
-        $InjectedContent = $InjectedContent.Replace("'@installapp@'", "'$InstallApp'")
+        $InjectedContent = $InjectedContent.Replace("@installapp@", $InstallApp)
     }
     
     $TempFile = Join-Path $env:TEMP "Simulate_$($ScriptFile)"
@@ -62,8 +62,8 @@ Write-Host "Step 5-2: Run Winget User Update (Interactive context)..."
 $WingetState = Invoke-ScriptWithState "5-2_RunWingetUserUpdate.ps1" $WingetState "Google.Chrome"
 Write-Host "Captured State (Summary): $($WingetState.Substring(0, [Math]::Min(100, $WingetState.Length)))..."
 
-# Step 6: Disable Account
-Write-Host "Step 6: Disable Account..."
+# Step 6: Disable & Remove Account
+Write-Host "Step 6: Disable & Remove Account..."
 $FinalState = Invoke-ScriptWithState "6_DisableTempAdmin.ps1" $WingetState
 Write-Host "Final Result: $FinalState"
 
