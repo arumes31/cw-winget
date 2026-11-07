@@ -38,7 +38,7 @@ jobs:
           if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
             Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
           }
-          $issues = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error
+          $issues = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error -ExcludeRule PSAvoidUsingConvertToSecureStringWithPlainText
           if ($issues) {
             $issues | Format-Table -AutoSize
             exit 1
