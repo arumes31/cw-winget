@@ -3,8 +3,22 @@ name: "CodeQL"
 on:
   push:
     branches: [ "main", "master" ]
+    # Only the `actions` language is analysed (CodeQL has no PowerShell
+    # support), so only workflow/action changes need a scan.
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "**/action.yml"
+      - "**/action.yaml"
   pull_request:
     branches: [ "main", "master" ]
+    # Only the `actions` language is analysed (CodeQL has no PowerShell
+    # support), so only workflow/action changes need a scan.
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "**/action.yml"
+      - "**/action.yaml"
   schedule:
     - cron: '0 0 * * 0'
 
@@ -19,6 +33,7 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read
