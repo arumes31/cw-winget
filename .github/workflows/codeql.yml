@@ -8,6 +8,8 @@ on:
     paths:
       - ".github/workflows/**"
       - ".github/actions/**"
+      - "**/action.yml"
+      - "**/action.yaml"
   pull_request:
     branches: [ "main", "master" ]
     # Only the `actions` language is analysed (CodeQL has no PowerShell
@@ -15,6 +17,8 @@ on:
     paths:
       - ".github/workflows/**"
       - ".github/actions/**"
+      - "**/action.yml"
+      - "**/action.yaml"
   schedule:
     - cron: '0 0 * * 0'
 
