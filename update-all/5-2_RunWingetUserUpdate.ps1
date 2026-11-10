@@ -13,11 +13,11 @@ if ($Parts.Count -lt 3) {
 $AdminUser = $Parts[1].Trim()
 $AdminPass = $Parts[2].Trim()
 
-# Creates a uniquely named working directory that only SYSTEM and Administrators (plus the optional
-# accounts in $ModifyAccounts) can access. The protected ACL is applied atomically at creation time,
-# so standard users can neither pre-create the folder nor tamper with files placed in it.
+# Creates a uniquely named working directory that only SYSTEM and Administrators can modify (the
+# optional accounts in $ReadAccounts get read/execute). The protected ACL is applied atomically at
+# creation time, so standard users can neither pre-create the folder nor tamper with files placed in it.
 function New-ProtectedWorkDir {
-    param([string[]]$ModifyAccounts = @())
+    param([string[]]$ReadAccounts = @())
 
     $BaseDir = Join-Path $env:windir "LTSvc"
     if (-not (Test-Path $BaseDir)) { $BaseDir = $env:ProgramData }
@@ -32,9 +32,9 @@ function New-ProtectedWorkDir {
     $Security.SetAccessRuleProtection($true, $false)
     $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($SystemSid, "FullControl", $Inherit, $Propagate, "Allow")))
     $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($AdminSid, "FullControl", $Inherit, $Propagate, "Allow")))
-    foreach ($Account in $ModifyAccounts) {
+    foreach ($Account in $ReadAccounts) {
         $AccountSid = (New-Object System.Security.Principal.NTAccount($Account)).Translate([System.Security.Principal.SecurityIdentifier])
-        $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($AccountSid, "Modify", $Inherit, $Propagate, "Allow")))
+        $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($AccountSid, "ReadAndExecute", $Inherit, $Propagate, "Allow")))
     }
 
     if ($PSVersionTable.PSEdition -eq "Core") {
@@ -50,6 +50,18 @@ function New-ProtectedWorkDir {
     if (-not ($Owner.Equals($SystemSid) -or $Owner.Equals($AdminSid) -or $Owner.Equals($CurrentSid))) { throw "Working directory $Path has unexpected owner $Owner" }
     if (Get-ChildItem -LiteralPath $Path -Force) { throw "Working directory $Path is not empty" }
     return $Path
+}
+
+# Pre-creates the transcript file and lets $Account read and write its contents. Write excludes
+# Delete, so the account cannot replace the file with a link; the folder itself stays read-only to it.
+function New-UserWritableLogFile {
+    param([string]$Path, [string]$Account)
+
+    $null = New-Item -ItemType File -Path $Path -Force
+    $AccountSid = (New-Object System.Security.Principal.NTAccount($Account)).Translate([System.Security.Principal.SecurityIdentifier])
+    $Acl = Get-Acl -LiteralPath $Path
+    $Acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($AccountSid, "Read, Write", "Allow")))
+    Set-Acl -LiteralPath $Path -AclObject $Acl
 }
 
 # 1. Identify all logged-on interactive users (Console + RDP)
@@ -96,17 +108,21 @@ foreach ($LoggedOnUser in $ActiveUsers) {
     Write-Host "Processing updates for session: $LoggedOnUser"
 
 $TaskName = "UserWingetUpdate_$(Get-Random)"
-# Per-user, per-run folder writable only by SYSTEM, Administrators and the user the task runs as,
-# so other users on the machine cannot tamper with the script or the log.
+$WorkDir = $null
+# Per-user, per-run folder writable only by SYSTEM and Administrators. The user the task runs as can
+# read the folder and write only the pre-created transcript file: it cannot add entries (such as a
+# junction) that SYSTEM would later follow while reading the log or deleting the folder.
 try {
-    $WorkDir = New-ProtectedWorkDir -ModifyAccounts @($LoggedOnUser)
+    $WorkDir = New-ProtectedWorkDir -ReadAccounts @($LoggedOnUser)
+    $UserLogPath = Join-Path -Path $WorkDir -ChildPath "user-winget-log.txt"
+    New-UserWritableLogFile -Path $UserLogPath -Account $LoggedOnUser
 }
 catch {
     Write-Warning "Failed to create protected working directory for ${LoggedOnUser}: $($_.Exception.Message)"
+    if ($WorkDir -and (Test-Path -LiteralPath $WorkDir)) { Remove-Item -LiteralPath $WorkDir -Recurse -Force -ErrorAction SilentlyContinue }
     continue
 }
 
-$UserLogPath = Join-Path -Path $WorkDir -ChildPath "user-winget-log.txt"
 $UserScriptPath = Join-Path -Path $WorkDir -ChildPath "UserWingetUpdate.ps1"
 
 # 2. Create the script to be run contextually as the user
